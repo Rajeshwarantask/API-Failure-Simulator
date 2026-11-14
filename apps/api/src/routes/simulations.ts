@@ -4,7 +4,7 @@
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { Router, type Request, type Response } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lt } from "drizzle-orm";
 import { db, executionsTable, integrationCredentialsTable, simulationsTable } from "@workspace/db";
 import { canAccessTeam, ensureUser, getAccessibleSimulation, requireUserId, simulationAccess } from "../lib/workspace.js";
 import type { AuthenticatedRequest } from "../middleware/auth.js";
@@ -410,6 +410,24 @@ async function getExecution(userId: string, id: number) {
   const [execution] = await db.select({ execution: executionsTable }).from(executionsTable).innerJoin(simulationsTable, eq(executionsTable.simulationId, simulationsTable.id)).where(and(eq(executionsTable.id, id), simulationAccess(userId))).limit(1);
   return execution?.execution;
 }
+
+router.get("/dashboard/executions", async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  const beforeId = Number(req.query.beforeId);
+  if (!Number.isSafeInteger(beforeId) || beforeId < 1) {
+    res.status(400).json({ error: "beforeId must be a positive integer" });
+    return;
+  }
+  const userId = requireUserId(req);
+  const older = await db
+    .select({ execution: executionsTable })
+    .from(executionsTable)
+    .innerJoin(simulationsTable, eq(executionsTable.simulationId, simulationsTable.id))
+    .where(and(simulationAccess(userId), lt(executionsTable.id, beforeId)))
+    .orderBy(desc(executionsTable.id))
+    .limit(25)
+    .then((rows) => rows.map((row) => row.execution));
+  res.json(ListExecutionsResponse.parse(older));
+});
 
 router.get("/dashboard", async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   await seedIfEmpty(requireUserId(req), (req as AuthenticatedRequest).userEmail);
