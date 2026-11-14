@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useInfiniteQuery } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { AuthGate } from '@/components/auth-gate';
 import { Toaster } from '@/components/ui/toaster';
@@ -44,6 +44,7 @@ import {
   Zap,
 } from 'lucide-react';
 import {
+  customFetch,
   getGetDashboardSummaryQueryKey,
   getGetExecutionQueryKey,
   getGetSimulationQueryKey,
@@ -216,7 +217,7 @@ function Stat({ label, value, detail, tone = 'default', icon: Icon }: { label: s
 }
 
 function Dashboard() {
-  const { data, isLoading, isError, error, refetch } = useGetDashboardSummary({ query: { queryKey: getGetDashboardSummaryQueryKey() } });
+  const { data, isLoading, isError, error, refetch } = useGetDashboardSummary({ query: { queryKey: getGetDashboardSummaryQueryKey(), refetchInterval: 10000 } });
   const { data: simulationData } = useListSimulations({ query: { queryKey: getListSimulationsQueryKey() } });
   const simulations = Array.isArray(simulationData)
     ? simulationData
@@ -226,11 +227,34 @@ function Dashboard() {
         ? (simulationData as any).simulations
         : [];
   const runs = Array.isArray(data?.recentRuns) ? data.recentRuns : [];
+  const [seenRecentRuns, setSeenRecentRuns] = useState<any[]>([]);
+  useEffect(() => {
+    if (runs.length > 0) {
+      setSeenRecentRuns((previous) => {
+        const byId = new Map([...previous, ...runs].map((run) => [run.id, run]));
+        return [...byId.values()].sort((a, b) => b.id - a.id);
+      });
+    }
+  }, [runs]);
+  const [historyCursor, setHistoryCursor] = useState<number | null>(null);
+  useEffect(() => {
+    if (historyCursor === null && runs.length > 0) setHistoryCursor(runs[runs.length - 1].id);
+  }, [historyCursor, runs]);
+  const olderRuns = useInfiniteQuery({
+    queryKey: ['dashboard-execution-history', historyCursor],
+    initialPageParam: historyCursor ?? 0,
+    enabled: historyCursor !== null,
+    queryFn: ({ pageParam }) => customFetch<any[]>(`/api/dashboard/executions?beforeId=${pageParam}`),
+    getNextPageParam: (lastPage) => lastPage.length === 25 ? lastPage[lastPage.length - 1].id : undefined,
+  });
+  const historicalRuns = olderRuns.data?.pages.flat() ?? [];
+  const visibleIds = new Set([...runs, ...seenRecentRuns].map((run) => run.id));
+  const visibleRuns = [...runs, ...seenRecentRuns.filter((item) => !runs.some((run) => run.id === item.id)), ...historicalRuns.filter((item) => !visibleIds.has(item.id))].sort((a, b) => b.id - a.id);
   return <><PageHeading breadcrumbs={[{ label: 'Workspace' }, { label: 'Overview' }]} title="Break it. Observe recovery." description="Inject controlled faults into known request paths, then inspect what your software actually does under pressure." actions={<Link href="/simulations/new" data-testid="link-create-simulation" className="inline-flex items-center gap-2 rounded-md border border-primary bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground shadow-sm hover:bg-primary/85"><Plus size={15} /> New simulation</Link>} />
     {isLoading ? <LoadingBlocks /> : isError ? <QueryError message={errorText(error)} retry={() => refetch()} /> : <div className="space-y-6">
        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1.3fr_1fr_1fr_1fr]"><Stat label="Total simulations" value={formatNumber(data?.totalSimulations)} detail={`${data?.activeSimulations ?? 0} enabled now`} icon={SlidersHorizontal} /><Stat label="Requests executed" value={formatNumber(data?.requestsExecuted)} detail="across all scenarios" tone="teal" icon={Zap} /><Stat label="Injected failures" value={formatNumber(data?.failedRequests)} detail={`${pct(data?.failedRequests ?? 0, data?.requestsExecuted ?? 0)} of traffic`} tone="red" icon={ShieldAlert} /><Stat label="Pass-through requests" value={formatNumber(data?.successfulRequests)} detail="returned without injection" tone="teal" icon={Check} /></div>
       <div className="grid gap-6 xl:grid-cols-[1.4fr_.9fr]">
-        <Panel><PanelTitle icon={Activity} title="Recent test runs" meta={`${runs.length} latest`} />{runs.length === 0 ? <EmptyState icon={Activity} title="No executions yet" description="Run a simulation to begin building an observable failure history." action={<Link href="/simulations" className="text-xs font-semibold text-primary" data-testid="link-browse-simulations">Browse simulations <ArrowRight size={13} className="inline" /></Link>} /> : <div className="divide-y divide-border">{runs.slice(0, 7).map(run => <ExecutionRow key={run.id} execution={run} />)}</div>}</Panel>
+        <Panel><PanelTitle icon={Activity} title="Recent test runs" meta={`${visibleRuns.length} loaded`} />{runs.length === 0 ? <EmptyState icon={Activity} title="No executions yet" description="Run a simulation to begin building an observable failure history." action={<Link href="/simulations" className="text-xs font-semibold text-primary" data-testid="link-browse-simulations">Browse simulations <ArrowRight size={13} className="inline" /></Link>} /> : <div className="max-h-[460px] overflow-y-auto overscroll-contain scroll-smooth divide-y divide-border" data-testid="recent-executions-scroll" onScroll={(event) => { const element = event.currentTarget; if (element.scrollHeight - element.scrollTop - element.clientHeight < 96 && olderRuns.hasNextPage && !olderRuns.isFetchingNextPage) void olderRuns.fetchNextPage(); }}>{visibleRuns.map(run => <ExecutionRow key={run.id} execution={run} />)}{olderRuns.isFetchingNextPage && <div className="px-5 py-3 text-center text-[11px] text-muted-foreground" role="status">Loading older executions…</div>}</div>}</Panel>
         <Panel><PanelTitle icon={Radar} title="Simulation fleet" meta={`${simulations.length} configured`} /><div className="p-5"><div className="mb-5 flex items-end justify-between"><div><div className="mono-data text-4xl font-semibold">{data?.activeSimulations ?? 0}<span className="text-lg text-muted-foreground">/{data?.totalSimulations ?? 0}</span></div><div className="mt-1 text-xs text-muted-foreground">active scenarios</div></div><Badge tone="good">nominal</Badge></div><div className="h-2 bg-secondary"><div className="h-full bg-primary" style={{ width: `${data?.totalSimulations ? ((data.activeSimulations / data.totalSimulations) * 100) : 0}%` }} /></div><div className="mt-5 space-y-3">{simulations.slice(0, 4).map((sim: any) => <Link href={`/simulations/${sim.id}`} key={sim.id} data-testid={`link-fleet-${sim.id}`} className="flex items-center justify-between border-b border-border/70 pb-3 text-xs last:border-0 last:pb-0"><span className="flex min-w-0 items-center gap-2"><span className={`size-1.5 shrink-0 rounded-full ${sim.enabled ? 'bg-primary pulse-dot' : 'bg-muted-foreground/40'}`} /><span className="truncate">{sim.name}</span></span><span className="mono-data text-muted-foreground">{formatNumber(sim.requestCount)}</span></Link>)}</div></div></Panel>
       </div>
        <Panel><PanelTitle icon={History} title="Recent simulations" meta="configured scenarios" /><div className="divide-y divide-border">{simulations.slice(0, 3).map((sim: any) => <Link href={`/simulations/${sim.id}`} key={sim.id} data-testid={`card-recent-simulation-${sim.id}`} className="group grid gap-3 px-5 py-4 hover:bg-secondary/45 md:grid-cols-[120px_minmax(0,1fr)_170px_120px] md:items-center"><Badge tone={sim.enabled ? 'good' : 'neutral'}>{sim.enabled ? 'enabled' : 'paused'}</Badge><div className="min-w-0"><h3 className="truncate text-sm font-semibold">{sim.name}</h3><p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{sim.method} {sim.targetUrl}</p></div><span className="mono-data text-[10px] text-muted-foreground">#{String(sim.id).padStart(4, '0')} / {formatDate(sim.updatedAt)}</span><span className="text-right text-[11px] font-semibold text-primary opacity-70 transition-opacity group-hover:opacity-100">Inspect <ChevronRight className="inline" size={13} /></span></Link>)}{simulations.length === 0 && <EmptyState icon={Database} title="No scenarios configured" description="Create the first controlled failure path." action={<Link href="/simulations/new" data-testid="link-empty-create" className="text-xs font-semibold text-primary">Create simulation</Link>} />}</div></Panel>
