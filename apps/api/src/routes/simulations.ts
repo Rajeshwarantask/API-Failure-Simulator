@@ -8,6 +8,8 @@ import type { AuthenticatedRequest } from "../middleware/auth.js";
 import { createSimulationExecutor } from "../engine/execute.js";
 import { createDrizzleEngineDatabase } from "../engine/drizzleDatabase.js";
 import { reproduceExecution } from "../engine/replay.js";
+import { proxyHeaders } from "../lib/proxy-headers.js";
+import { validateTargetUrl } from "../lib/target-url.js";
 import { deriveSeed, generateSeed } from "../engine/prng.js";
 import { toFailureType, toHttpMethod, type RunOverrides } from "../engine/types.js";
 
@@ -75,7 +77,7 @@ function originAllowed(origin: string | undefined, allowedOrigins: string[]): bo
 }
 
 const proxyMethods = "GET, POST, PUT, PATCH, DELETE, OPTIONS";
-const proxyHeaders = "Content-Type, X-Faultline-Token";
+const proxyAllowedHeaders = "Accept, Content-Type, User-Agent, X-Request-Id, X-Faultline-Token";
 const developmentProxyOrigin = "http://localhost:5173";
 
 function applyProxyCors(req: Request, res: Response, simulation: typeof simulationsTable.$inferSelect): boolean {
@@ -92,7 +94,7 @@ function applyProxyCors(req: Request, res: Response, simulation: typeof simulati
   res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Access-Control-Allow-Credentials", "true");
   res.setHeader("Access-Control-Allow-Methods", proxyMethods);
-  res.setHeader("Access-Control-Allow-Headers", proxyHeaders);
+  res.setHeader("Access-Control-Allow-Headers", proxyAllowedHeaders);
   res.setHeader("Vary", "Origin");
   res.setHeader("Access-Control-Expose-Headers", "content-type, x-simulator-rule");
   return true;
@@ -247,6 +249,12 @@ router.post("/simulations", async (req: AuthenticatedRequest, res): Promise<void
     return;
   }
   const data = parsed.data;
+  try {
+    await validateTargetUrl(data.targetUrl);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "target_url_not_allowed" });
+    return;
+  }
   const teamId = typeof req.body?.teamId === "number" ? req.body.teamId : null;
   if (teamId !== null && !(await canAccessTeam(requireUserId(req), teamId))) {
     res.status(403).json({ error: "You are not a member of that team." });
@@ -362,6 +370,14 @@ router.patch("/simulations/:id", async (req: AuthenticatedRequest, res): Promise
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
+  }
+  if (parsed.data.targetUrl) {
+    try {
+      await validateTargetUrl(parsed.data.targetUrl);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "target_url_not_allowed" });
+      return;
+    }
   }
   const userId = requireUserId(req);
   const existing = await getSimulation(userId, params.data.id);
@@ -552,7 +568,7 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
       .split(",")
       .map((header) => header.trim().toLowerCase())
       .filter(Boolean);
-    const allowedHeaderNames = new Set(["content-type", "x-faultline-token"]);
+    const allowedHeaderNames = new Set(["accept", "content-type", "user-agent", "x-request-id", "x-faultline-token"]);
     const methodAllowed = !requestedMethod || proxyMethods.split(", ").includes(requestedMethod.toUpperCase());
     const headersAllowed = requestedHeaders.every((header) => allowedHeaderNames.has(header));
     if (!methodAllowed || !headersAllowed) {
@@ -588,10 +604,7 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
     }
     await db.update(integrationCredentialsTable).set({ lastUsedAt: now(), lastUsedIp: clientIp(req) }).where(eq(integrationCredentialsTable.id, credential.id));
   }
-  const headers: Record<string, string> = {};
-  for (const [key, value] of Object.entries(req.headers)) {
-    if (typeof value === "string" && !["host", "x-faultline-token", "x-execution-token"].includes(key.toLowerCase())) headers[key] = value;
-  }
+  const headers = proxyHeaders(simulation.headers, req.headers);
   const queryParams: Record<string, string> = {};
   for (const [key, value] of Object.entries(req.query)) {
     if (typeof value === "string") queryParams[key] = value;
@@ -607,12 +620,12 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
     source: dashboardSession ? "dashboard" : "external",
     tokenAuthenticated: !dashboardSession,
     requestIp: clientIp(req),
-  });
+  }, { preserveRawResponseHeaders: true });
   if (execution.status === "timeout" || execution.failureType === "connection_failure") {
     res.destroy();
     return;
   }
-  const responseHeaders = execution.responseHeaders as Record<string, string | string[]>;
+  const responseHeaders = ((execution as typeof execution & { proxyResponseHeaders?: Record<string, string | string[]> }).proxyResponseHeaders ?? execution.responseHeaders) as Record<string, string | string[]>;
   const setCookie = responseHeaders["set-cookie"];
   res.status(execution.simulatedStatus ?? 502);
   for (const [key, value] of Object.entries(responseHeaders)) {

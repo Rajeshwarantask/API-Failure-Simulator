@@ -2,6 +2,7 @@ import type { Execution, ExecutionConfigSnapshot, NewExecution, Simulation } fro
 import { deriveResponseBody, decideFailure } from "./decide.js";
 import { matchConditions } from "./matchConditions.js";
 import { generateSeed } from "./prng.js";
+import { capStoredBody, createSafeFetch, readCappedBody, redactExecutionData } from "../lib/target-url.js";
 import { toFailureType, toHttpMethod, type FailureType, type HttpMethod, type RequestOverrides, type RunOverrides } from "./types.js";
 
 export type ExecutionInsert = NewExecution;
@@ -21,7 +22,7 @@ export type EngineDependencies = {
 };
 
 const defaultDependencies = {
-  fetch,
+  fetch: createSafeFetch(),
   sleep: (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
   now: () => new Date(),
   createSeed: generateSeed,
@@ -53,16 +54,16 @@ function createConfigSnapshot(
   overrides: RunOverrides,
   request: RequestOverrides,
 ): ExecutionConfigSnapshot {
-  return {
+  return redactExecutionData({
     simulation: {
       targetUrl: simulation.targetUrl,
       method: simulation.method,
       headers: simulation.headers,
       queryParams: simulation.queryParams,
-      requestBody: simulation.requestBody,
+      requestBody: capStoredBody(simulation.requestBody),
       failureType: simulation.failureType,
       statusCode: simulation.statusCode,
-      responseBody: simulation.responseBody,
+      responseBody: capStoredBody(simulation.responseBody),
       latencyMs: simulation.latencyMs,
       timeoutMs: simulation.timeoutMs,
       probability: simulation.probability,
@@ -77,11 +78,11 @@ function createConfigSnapshot(
       failureType: overrides.failureType,
       statusCode: overrides.statusCode,
       latencyMs: overrides.latencyMs,
-      responseBody: overrides.responseBody,
+      responseBody: overrides.responseBody === undefined ? undefined : capStoredBody(overrides.responseBody) ?? undefined,
       workflow: overrides.workflow,
     },
-    request,
-  };
+    request: { ...request, requestBody: capStoredBody(request.requestBody) },
+  });
 }
 
 export function createSimulationExecutor(dependencies: EngineDependencies) {
@@ -91,7 +92,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
     simulation: Simulation,
     overrides: RunOverrides = {},
     requestOverrides: RequestOverrides = {},
-    options: { allowUpstream?: boolean } = {},
+    options: { allowUpstream?: boolean; preserveRawResponseHeaders?: boolean } = {},
   ) {
     const startedAt = engine.now();
     const seed = overrides.seed ?? engine.createSeed();
@@ -160,7 +161,8 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
             signal: controller.signal,
           });
           finalStatus = upstream.status;
-          finalBody = await upstream.text();
+          const upstreamBody = await readCappedBody(upstream);
+          finalBody = upstreamBody.body;
           responseHeaders = {};
           upstream.headers.forEach((value, key) => {
             if (key !== "set-cookie" && (simulation.preserveHeaders || key === "content-type")) responseHeaders[key] = value;
@@ -168,6 +170,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
           const headersWithCookies = upstream.headers as Headers & { getSetCookie?: () => string[] };
           const upstreamCookies = typeof headersWithCookies.getSetCookie === "function" ? headersWithCookies.getSetCookie() : [];
           if (simulation.preserveHeaders && upstreamCookies.length > 0) responseHeaders["set-cookie"] = upstreamCookies;
+          if (upstreamBody.truncated) responseHeaders["x-simulator-truncated"] = "true";
           status = upstream.ok ? "success" : "failure";
         } catch (error) {
           status = error instanceof Error && error.name === "AbortError" ? "timeout" : "failure";
@@ -186,21 +189,22 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
       actualLatencyMs = Math.max(actualLatencyMs, engine.now().getTime() - startedAt.getTime());
     }
 
+    const proxyResponseHeaders = { ...responseHeaders, "x-simulator-rule": failureType };
     const execution = await engine.db.persistExecution({
       ownerId: simulation.ownerId,
       teamId: simulation.teamId,
       simulationId: simulation.id,
       seed,
-      configSnapshot,
+      configSnapshot: redactExecutionData(configSnapshot),
       method,
       url: buildUrl(effectiveTargetUrl, requestQuery),
-      requestHeaders,
+      requestHeaders: redactExecutionData(requestHeaders),
       requestQuery,
-      requestBody,
+      requestBody: capStoredBody(requestBody),
       failureType,
       simulatedStatus: finalStatus,
-      responseHeaders: { ...responseHeaders, "x-simulator-rule": failureType },
-      responseBody: finalBody,
+      responseHeaders: redactExecutionData(proxyResponseHeaders),
+      responseBody: capStoredBody(finalBody),
       actualLatencyMs,
       status,
       source: requestOverrides.source ?? "dashboard",
@@ -216,7 +220,9 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
       lastExecutedAt: startedAt,
       updatedAt: startedAt,
     });
-    return execution;
+    return options.preserveRawResponseHeaders
+      ? { ...execution, proxyResponseHeaders }
+      : execution;
   };
 }
 

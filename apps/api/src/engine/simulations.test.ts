@@ -5,6 +5,8 @@ import { createSimulationExecutor, type EngineDatabase } from "./execute.js";
 import { legacySeededRandom } from "./legacySeededRandom.test-helper.js";
 import { deriveSeed, mulberry32 } from "./prng.js";
 import { reproduceExecution } from "./replay.js";
+import { proxyHeaders } from "../lib/proxy-headers.js";
+import { MAX_UPSTREAM_BODY_BYTES } from "../lib/target-url.js";
 
 // At p=50%, 1,000 trials have a 1.58pp standard error; a 5pp bound is about 3.2 standard errors.
 const INJECTION_RATE_TOLERANCE = 0.05;
@@ -128,6 +130,92 @@ describe("deterministic execution engine", () => {
 
     expect(sequence(123)).toEqual(sequence(123));
     expect(sequence(123)).not.toEqual(sequence(124));
+  });
+
+  it("redacts persisted headers and snapshots while retaining raw proxy response headers", async () => {
+    let outgoingHeaders: Record<string, string> = {};
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (_input, init) => {
+        outgoingHeaders = Object.fromEntries(new Headers(init?.headers).entries());
+        return new Response("upstream", {
+          status: 200,
+          headers: {
+            "set-cookie": "session=response-secret",
+            "x-faultline-debug": "internal-secret",
+            "content-type": "application/json",
+          },
+        });
+      },
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const simulation: Simulation = {
+      ...fixtureSimulation(102),
+      failureType: "none",
+      headers: {
+        authorization: "Bearer config-secret",
+        cookie: "session=config-secret",
+        "x-faultline-key": "internal-secret",
+      },
+    };
+    const execution = await execute(
+      simulation,
+      {},
+      {
+        source: "external",
+        headers: proxyHeaders(simulation.headers, {
+          authorization: "Bearer caller-secret",
+          cookie: "session=caller-secret",
+          "x-faultline-token": "caller-token",
+          accept: "application/json",
+        }),
+      },
+      { preserveRawResponseHeaders: true },
+    );
+
+    expect(outgoingHeaders.authorization).toBe("Bearer config-secret");
+    expect(outgoingHeaders.cookie).toBe("session=config-secret");
+    expect(outgoingHeaders["x-faultline-token"]).toBeUndefined();
+    expect(execution.requestHeaders).toMatchObject({
+      authorization: "[REDACTED]",
+      cookie: "[REDACTED]",
+      accept: "application/json",
+    });
+    expect(execution.requestHeaders).not.toHaveProperty("x-faultline-token");
+    expect(execution.responseHeaders).toMatchObject({
+      "set-cookie": "[REDACTED]",
+      "x-faultline-debug": "[REDACTED]",
+    });
+    expect(execution.configSnapshot?.simulation.headers).toMatchObject({
+      authorization: "[REDACTED]",
+      cookie: "[REDACTED]",
+      "x-faultline-key": "[REDACTED]",
+    });
+    expect(execution.configSnapshot?.request.headers).toMatchObject({
+      authorization: "[REDACTED]",
+      cookie: "[REDACTED]",
+    });
+    expect(execution.configSnapshot?.request.headers).not.toHaveProperty("x-faultline-token");
+    const rawProxyResponseHeaders = (execution as typeof execution & {
+      proxyResponseHeaders?: Record<string, string | string[]>;
+    }).proxyResponseHeaders;
+    expect(rawProxyResponseHeaders?.["set-cookie"]).toEqual(["session=response-secret"]);
+  });
+
+  it("caps upstream response bytes and persists a truncation marker", async () => {
+    const body = new Uint8Array(MAX_UPSTREAM_BODY_BYTES + 8).fill(97);
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async () => new Response(body),
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const simulation: Simulation = { ...fixtureSimulation(103), failureType: "none" };
+    const execution = await execute(simulation);
+
+    expect(new TextEncoder().encode(execution.responseBody ?? "").byteLength).toBe(MAX_UPSTREAM_BODY_BYTES);
+    expect(execution.responseHeaders).toMatchObject({ "x-simulator-truncated": "true" });
   });
 
   it("reproduces the stored decision and response after live config changes without upstream calls", async () => {
