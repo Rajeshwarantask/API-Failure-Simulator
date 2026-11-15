@@ -1,13 +1,13 @@
-// The API and database packages resolve separate Drizzle type copies during Vercel's workspace check.
-// Runtime behavior is unchanged; the API package owns the validated query boundary.
-// @ts-nocheck
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { Router, type Request, type Response } from "express";
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq, isNull, lt } from "drizzle-orm";
 import { db, executionsTable, integrationCredentialsTable, simulationsTable } from "@workspace/db";
 import { canAccessTeam, ensureUser, getAccessibleSimulation, requireUserId, simulationAccess } from "../lib/workspace.js";
 import type { AuthenticatedRequest } from "../middleware/auth.js";
+import { createSimulationExecutor } from "../engine/execute.js";
+import { toHttpMethod, type RunOverrides } from "../engine/types.js";
+
 import {
   CreateSimulationBody,
   CreateSimulationResponse,
@@ -33,37 +33,8 @@ import {
 
 const router = Router();
 
-const failureStatuses: Record<string, number> = {
-  http_400: 400,
-  http_401: 401,
-  http_403: 403,
-  http_404: 404,
-  http_429: 429,
-  http_500: 500,
-  http_502: 502,
-  http_503: 503,
-};
-
-type FailureType =
-  | "none"
-  | "http_400"
-  | "http_401"
-  | "http_403"
-  | "http_404"
-  | "http_429"
-  | "http_500"
-  | "http_502"
-  | "http_503"
-  | "timeout"
-  | "latency"
-  | "connection_failure"
-  | "malformed_json"
-  | "empty_response"
-  | "duplicate_response";
-
-type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-
 const now = () => new Date();
+const executeSimulation = createSimulationExecutor({ db });
 
 function parseId(value: string | string[] | undefined): number | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -129,35 +100,6 @@ function mapSimulation(simulation: typeof simulationsTable.$inferSelect) {
     ...simulation,
     endpoint: endpointFor(simulation.id),
   };
-}
-
-function defaultFailureBody(type: FailureType): string {
-  const bodies: Record<string, unknown> = {
-    http_400: { error: "bad_request", message: "Invalid request" },
-    http_401: { error: "unauthorized", message: "Authentication required" },
-    http_403: { error: "forbidden", message: "Access denied" },
-    http_404: { error: "not_found", message: "Resource not found" },
-    http_429: { error: "rate_limit_exceeded", message: "Too many requests", retry_after: 60 },
-    http_500: { error: "internal_server_error", message: "An unexpected error occurred" },
-    http_502: { error: "bad_gateway", message: "Upstream service unavailable" },
-    http_503: { error: "service_unavailable", message: "Service temporarily unavailable" },
-  };
-  return JSON.stringify(bodies[type] ?? { error: type, status: failureStatuses[type] ?? 500 });
-}
-
-function createTimeline(type: FailureType, baseTime: Date) {
-  const received = new Date(baseTime.getTime());
-  const injected = new Date(baseTime.getTime() + 8);
-  const generated = new Date(baseTime.getTime() + 18);
-  const completed = new Date(baseTime.getTime() + 28);
-  return [
-    { label: "Request received", timestamp: received.toISOString(), tone: "neutral" as const },
-    ...(type !== "none"
-      ? [{ label: "Failure rule evaluated", timestamp: injected.toISOString(), tone: "warning" as const }]
-      : []),
-    { label: "Response generated", timestamp: generated.toISOString(), tone: type === "none" ? ("success" as const) : ("danger" as const) },
-    { label: "Request completed", timestamp: completed.toISOString(), tone: "neutral" as const },
-  ];
 }
 
 async function seedIfEmpty(userId: string, email?: string): Promise<void> {
@@ -245,162 +187,6 @@ async function seedIfEmpty(userId: string, email?: string): Promise<void> {
   ]);
 }
 
-function buildUrl(targetUrl: string, query: Record<string, string>): string {
-  const url = new URL(targetUrl);
-  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
-  return url.toString();
-}
-
-type RunOverrides = {
-  failureType?: FailureType;
-  statusCode?: number;
-  latencyMs?: number;
-  responseBody?: string;
-  seed?: number;
-  workflow?: Array<{ failureType: FailureType; statusCode?: number; attempts?: number; latencyMs?: number }>;
-};
-
-type Conditions = {
-  method?: string;
-  path?: string;
-  headers?: Record<string, string>;
-  queryParams?: Record<string, string>;
-  bodyContains?: string;
-};
-
-function matchesConditions(conditions: Conditions | null | undefined, request: RequestOverrides, targetUrl: string): boolean {
-  if (!conditions || Object.keys(conditions).length === 0) return true;
-  if (conditions.method && conditions.method.toUpperCase() !== request.method) return false;
-  if (conditions.path) {
-    const configuredPath = conditions.path.trim().replace(/\/$/, "") || "/";
-    const requestPath = new URL(targetUrl).pathname.replace(/\/$/, "") || "/";
-    if (requestPath !== configuredPath) return false;
-  }
-  for (const [key, value] of Object.entries(conditions.headers ?? {})) {
-    if ((request.headers ?? {})[key.toLowerCase()] !== value && (request.headers ?? {})[key] !== value) return false;
-  }
-  for (const [key, value] of Object.entries(conditions.queryParams ?? {})) {
-    if ((request.queryParams ?? {})[key] !== value) return false;
-  }
-  if (conditions.bodyContains && !(request.requestBody ?? "").includes(conditions.bodyContains)) return false;
-  return true;
-}
-
-function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (1664525 * state + 1013904223) >>> 0;
-    return state / 4294967296;
-  };
-}
-
-type RequestOverrides = {
-  method?: HttpMethod;
-  headers?: Record<string, string>;
-  queryParams?: Record<string, string>;
-  requestBody?: string | null;
-  pathSuffix?: string;
-  source?: "dashboard" | "external";
-  tokenAuthenticated?: boolean;
-  requestIp?: string | null;
-};
-
-async function executeSimulation(
-  simulation: typeof simulationsTable.$inferSelect,
-  overrides: RunOverrides = {},
-  requestOverrides: RequestOverrides = {},
-) {
-  const startedAt = now();
-  const method = requestOverrides.method ?? (simulation.method as HttpMethod);
-  const requestHeaders = requestOverrides.headers ?? simulation.headers;
-  const requestQuery = requestOverrides.queryParams ?? simulation.queryParams;
-  const requestBody = requestOverrides.requestBody === undefined ? simulation.requestBody : requestOverrides.requestBody;
-  const baseUrl = new URL(simulation.targetUrl);
-  if (requestOverrides.pathSuffix) {
-    const suffix = requestOverrides.pathSuffix.startsWith("/") ? requestOverrides.pathSuffix : `/${requestOverrides.pathSuffix}`;
-    baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, "")}${suffix}`;
-  }
-  const effectiveTargetUrl = baseUrl.toString();
-  const request = { method, headers: requestHeaders, queryParams: requestQuery, requestBody };
-  const conditionsMatch = matchesConditions(simulation.conditions as Conditions, request, effectiveTargetUrl);
-  const workflow = overrides.workflow ?? simulation.workflow ?? [];
-  const workflowStep = workflow.length > 0 ? workflow.find((step) => (step.attempts ?? 1) > 0) : undefined;
-  const configuredFailure = (workflowStep?.failureType ?? overrides.failureType ?? (simulation.enabled && conditionsMatch ? simulation.failureType : "none")) as FailureType;
-  const probability = Math.max(0, Math.min(100, simulation.enabled && conditionsMatch ? simulation.probability : 0));
-  const random = seededRandom(overrides.seed ?? simulation.id);
-  const injected = configuredFailure !== "none" && (probability >= 100 || (probability > 0 && random() * 100 < probability));
-  const failureType: FailureType = injected ? configuredFailure : "none";
-  const statusCode = failureStatuses[failureType] ?? (failureType === "none" ? null : overrides.statusCode ?? simulation.statusCode ?? 503);
-  const isTimeout = failureType === "timeout";
-  const isFailure = failureType !== "none" && failureType !== "latency";
-  const configuredLatency = Math.max(0, overrides.latencyMs ?? simulation.latencyMs ?? 0);
-  const responseBody = overrides.responseBody !== undefined ? overrides.responseBody : failureType === "empty_response" ? "" : failureType === "malformed_json" ? '{"error":"unterminated"' : failureType === "none" || failureType === "latency" ? null : simulation.responseBody ?? defaultFailureBody(failureType);
-  let responseHeaders: Record<string, string | string[]> = { "content-type": "application/json" };
-  let actualLatencyMs = 0;
-  let status: "success" | "failure" | "timeout" = isTimeout ? "timeout" : isFailure ? "failure" : "success";
-  let finalStatus = statusCode;
-  let finalBody = responseBody;
-
-  if (failureType === "connection_failure") {
-    finalStatus = null;
-    finalBody = null;
-  } else if (failureType === "timeout") {
-    finalStatus = null;
-    finalBody = null;
-    actualLatencyMs = Math.max(0, simulation.timeoutMs ?? 0);
-    await new Promise(resolve => setTimeout(resolve, actualLatencyMs));
-  } else if (failureType === "duplicate_response") {
-    // HTTP permits one response per request; model the duplicate-write hazard as a single 502 with diagnostic metadata.
-    finalStatus = 502;
-    finalBody = JSON.stringify({
-      error: "duplicate_response",
-      message: "The simulator detected an attempted duplicate response.",
-      attemptedStatus: statusCode ?? 200,
-    });
-    responseHeaders["x-faultline-duplicate-response"] = "true";
-    status = "failure";
-    actualLatencyMs = Math.max(0, Date.now() - startedAt.getTime());
-  } else {
-    if (configuredLatency > 0) await new Promise(resolve => setTimeout(resolve, configuredLatency));
-
-    const shouldForward = simulation.forwardRequest || requestOverrides.source === "external";
-    if ((failureType === "none" || failureType === "latency") && shouldForward) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), Math.max(0, simulation.forwardTimeoutMs ?? 10000));
-      try {
-        const upstream = await fetch(buildUrl(effectiveTargetUrl, requestQuery), { method, headers: requestHeaders, body: ["GET", "HEAD"].includes(method) ? undefined : requestBody ?? undefined, signal: controller.signal });
-        finalStatus = upstream.status;
-        finalBody = await upstream.text();
-        responseHeaders = {};
-        upstream.headers.forEach((value, key) => { if (key !== "set-cookie" && (simulation.preserveHeaders || key === "content-type")) responseHeaders[key] = value; });
-        const upstreamCookies = typeof (upstream.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie === "function"
-          ? (upstream.headers as Headers & { getSetCookie: () => string[] }).getSetCookie()
-          : [];
-        if (simulation.preserveHeaders && upstreamCookies.length > 0) responseHeaders["set-cookie"] = upstreamCookies;
-        status = upstream.ok ? "success" : "failure";
-      } catch (error) {
-        status = error instanceof Error && error.name === "AbortError" ? "timeout" : "failure";
-        finalStatus = null;
-        finalBody = null;
-      } finally { clearTimeout(timer); }
-    } else if (failureType === "none" || failureType === "latency") {
-      finalStatus = 200;
-      finalBody = null;
-    }
-    actualLatencyMs = Math.max(0, Date.now() - startedAt.getTime());
-  }
-  if (failureType === "timeout" || failureType === "connection_failure") {
-    actualLatencyMs = Math.max(actualLatencyMs, Date.now() - startedAt.getTime());
-  }
-
-  const [execution] = await db.insert(executionsTable).values({
-    ownerId: simulation.ownerId, teamId: simulation.teamId, simulationId: simulation.id, method, url: buildUrl(effectiveTargetUrl, requestQuery), requestHeaders, requestQuery, requestBody,
-    failureType, simulatedStatus: finalStatus, responseHeaders: { ...responseHeaders, "x-simulator-rule": failureType }, responseBody: finalBody,
-    actualLatencyMs, status, source: requestOverrides.source ?? "dashboard", tokenAuthenticated: requestOverrides.tokenAuthenticated ?? false, requestIp: requestOverrides.requestIp ?? null, timeline: createTimeline(failureType, startedAt), createdAt: startedAt,
-  }).returning();
-  await db.update(simulationsTable).set({ requestCount: simulation.requestCount + 1, failedCount: simulation.failedCount + (isFailure || status === "timeout" ? 1 : 0), successCount: simulation.successCount + (isFailure || status === "timeout" ? 0 : 1), lastExecutedAt: startedAt, updatedAt: startedAt }).where((eq as any)(simulationsTable.id, simulation.id));
-  return execution;
-}
 
 async function getSimulation(userId: string, id: number) {
   return getAccessibleSimulation(userId, id);
@@ -433,7 +219,7 @@ router.get("/dashboard", async (req: AuthenticatedRequest, res: Response): Promi
   await seedIfEmpty(requireUserId(req), (req as AuthenticatedRequest).userEmail);
   const userId = requireUserId(req);
   const simulations = await db.select().from(simulationsTable).where(simulationAccess(userId));
-  const recent = await db.select({ execution: executionsTable }).from(executionsTable).innerJoin(simulationsTable, eq(executionsTable.simulationId, simulationsTable.id)).where(simulationAccess(userId)).orderBy((desc as any)(executionsTable.createdAt)).limit(8).then(rows => rows.map(row => row.execution));
+  const recent = await db.select({ execution: executionsTable }).from(executionsTable).innerJoin(simulationsTable, eq(executionsTable.simulationId, simulationsTable.id)).where(simulationAccess(userId)).orderBy(desc(executionsTable.createdAt)).limit(8).then(rows => rows.map(row => row.execution));
   const payload = {
     totalSimulations: simulations.length,
     activeSimulations: simulations.filter((item) => item.enabled).length,
@@ -494,7 +280,7 @@ router.post("/simulations", async (req: AuthenticatedRequest, res): Promise<void
   res.status(201).json(CreateSimulationResponse.parse(mapSimulation(simulation)));
 });
 
-router.get("/simulations/:id", async (req, res): Promise<void> => {
+router.get("/simulations/:id", async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetSimulationParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -508,8 +294,8 @@ router.get("/simulations/:id", async (req, res): Promise<void> => {
   const executions = await db
     .select()
     .from(executionsTable)
-    .where((eq as any)(executionsTable.simulationId, simulation.id))
-    .orderBy((desc as any)(executionsTable.createdAt))
+    .where(eq(executionsTable.simulationId, simulation.id))
+    .orderBy(desc(executionsTable.createdAt))
     .limit(20);
   res.json(GetSimulationResponse.parse({ ...mapSimulation(simulation), executions }));
 });
@@ -519,50 +305,51 @@ async function findCredential(simulationId: number) {
   return credential;
 }
 
-router.get("/simulations/:id/integration", async (req, res): Promise<void> => {
+router.get("/simulations/:id/integration", async (req: AuthenticatedRequest, res): Promise<void> => {
   const simulation = await getSimulation(requireUserId(req), Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
   res.json({ credential: credentialSummary(await findCredential(simulation.id)), allowedOrigins: simulation.allowedOrigins ?? [] });
 });
 
-router.put("/simulations/:id/integration/origins", async (req, res): Promise<void> => {
+router.put("/simulations/:id/integration/origins", async (req: AuthenticatedRequest, res): Promise<void> => {
   const ownerId = requireUserId(req);
   const simulation = await getSimulation(ownerId, Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
-  const origins = Array.isArray(req.body?.origins) ? [...new Set(req.body.origins.map((origin: unknown) => String(origin).trim()).filter(Boolean))] : [];
+  const requestedOrigins: unknown[] = Array.isArray(req.body?.origins) ? req.body.origins : [];
+  const origins = [...new Set(requestedOrigins.map((origin) => String(origin).trim()).filter((origin) => origin.length > 0))];
   await db.update(simulationsTable).set({ allowedOrigins: origins, updatedAt: now() }).where(and(eq(simulationsTable.id, simulation.id), eq(simulationsTable.ownerId, ownerId)));
   res.json({ allowedOrigins: origins });
 });
 
-router.post("/simulations/:id/integration/token", async (req, res): Promise<void> => {
+router.post("/simulations/:id/integration/token", async (req: AuthenticatedRequest, res): Promise<void> => {
   const ownerId = requireUserId(req);
   const simulation = await getSimulation(ownerId, Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
   const token = createExecutionToken();
-  await db.update(integrationCredentialsTable).set({ revokedAt: now() }).where(and(eq(integrationCredentialsTable.simulationId, simulation.id), eq(integrationCredentialsTable.ownerId, ownerId), eq(integrationCredentialsTable.revokedAt, null)));
+  await db.update(integrationCredentialsTable).set({ revokedAt: now() }).where(and(eq(integrationCredentialsTable.simulationId, simulation.id), eq(integrationCredentialsTable.ownerId, ownerId), isNull(integrationCredentialsTable.revokedAt)));
   const [credential] = await db.insert(integrationCredentialsTable).values({ simulationId: simulation.id, ownerId, keyPrefix: token.slice(0, 12), keyHash: await bcrypt.hash(token, 12), expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) }).returning();
   res.status(201).json({ token, credential: credentialSummary(credential) });
 });
 
-router.post("/simulations/:id/integration/token/regenerate", async (req, res): Promise<void> => {
+router.post("/simulations/:id/integration/token/regenerate", async (req: AuthenticatedRequest, res): Promise<void> => {
   const ownerId = requireUserId(req);
   const simulation = await getSimulation(ownerId, Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
   const token = createExecutionToken();
-  await db.update(integrationCredentialsTable).set({ revokedAt: now() }).where(and(eq(integrationCredentialsTable.simulationId, simulation.id), eq(integrationCredentialsTable.ownerId, ownerId), eq(integrationCredentialsTable.revokedAt, null)));
+  await db.update(integrationCredentialsTable).set({ revokedAt: now() }).where(and(eq(integrationCredentialsTable.simulationId, simulation.id), eq(integrationCredentialsTable.ownerId, ownerId), isNull(integrationCredentialsTable.revokedAt)));
   const [credential] = await db.insert(integrationCredentialsTable).values({ simulationId: simulation.id, ownerId, keyPrefix: token.slice(0, 12), keyHash: await bcrypt.hash(token, 12), expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) }).returning();
   res.status(201).json({ token, credential: credentialSummary(credential) });
 });
 
-router.post("/simulations/:id/integration/token/revoke", async (req, res): Promise<void> => {
+router.post("/simulations/:id/integration/token/revoke", async (req: AuthenticatedRequest, res): Promise<void> => {
   const ownerId = requireUserId(req);
   const simulation = await getSimulation(ownerId, Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
-  await db.update(integrationCredentialsTable).set({ revokedAt: now() }).where(and(eq(integrationCredentialsTable.simulationId, simulation.id), eq(integrationCredentialsTable.ownerId, ownerId), eq(integrationCredentialsTable.revokedAt, null)));
+  await db.update(integrationCredentialsTable).set({ revokedAt: now() }).where(and(eq(integrationCredentialsTable.simulationId, simulation.id), eq(integrationCredentialsTable.ownerId, ownerId), isNull(integrationCredentialsTable.revokedAt)));
   res.status(204).end();
 });
 
-router.patch("/simulations/:id", async (req, res): Promise<void> => {
+router.patch("/simulations/:id", async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = UpdateSimulationParams.safeParse(req.params);
   const parsed = UpdateSimulationBody.safeParse(req.body);
   if (!params.success) {
@@ -582,7 +369,7 @@ router.patch("/simulations/:id", async (req, res): Promise<void> => {
   const [simulation] = await db
     .update(simulationsTable)
     .set({ ...parsed.data, updatedAt: now() })
-    .where((eq as any)(simulationsTable.id, existing.id))
+    .where(eq(simulationsTable.id, existing.id))
     .returning();
   if (!simulation) {
     res.status(404).json({ error: "Simulation not found" });
@@ -591,7 +378,7 @@ router.patch("/simulations/:id", async (req, res): Promise<void> => {
   res.json(UpdateSimulationResponse.parse(mapSimulation(simulation)));
 });
 
-router.delete("/simulations/:id", async (req, res): Promise<void> => {
+router.delete("/simulations/:id", async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = DeleteSimulationParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -604,7 +391,7 @@ router.delete("/simulations/:id", async (req, res): Promise<void> => {
   }
   const [simulation] = await db
     .delete(simulationsTable)
-    .where((eq as any)(simulationsTable.id, existing.id))
+    .where(eq(simulationsTable.id, existing.id))
     .returning();
   if (!simulation) {
     res.status(404).json({ error: "Simulation not found" });
@@ -624,13 +411,13 @@ router.get("/simulations/:id/executions", async (req: AuthenticatedRequest, res)
   const executions = await db
     .select()
     .from(executionsTable)
-    .where((eq as any)(executionsTable.simulationId, simulation.id))
-    .orderBy((desc as any)(executionsTable.createdAt))
+    .where(eq(executionsTable.simulationId, simulation.id))
+    .orderBy(desc(executionsTable.createdAt))
     .limit(100);
   res.json(ListExecutionsResponse.parse(executions));
 });
 
-router.post("/simulations/:id/executions", async (req, res): Promise<void> => {
+router.post("/simulations/:id/executions", async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = RunSimulationParams.safeParse(req.params);
   const parsed = RunSimulationBody.safeParse(req.body ?? {});
   if (!params.success) {
@@ -646,11 +433,11 @@ router.post("/simulations/:id/executions", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Simulation not found" });
     return;
   }
-  const execution = await executeSimulation(simulation, parsed.data as RunOverrides);
+  const execution = await executeSimulation(simulation, parsed.data);
   res.status(201).json(RunSimulationResponse.parse(execution));
 });
 
-router.get("/executions/:id", async (req, res): Promise<void> => {
+router.get("/executions/:id", async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = GetExecutionParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -664,7 +451,7 @@ router.get("/executions/:id", async (req, res): Promise<void> => {
   res.json(GetExecutionResponse.parse(execution));
 });
 
-router.post("/executions/:id/compare", async (req, res): Promise<void> => {
+router.post("/executions/:id/compare", async (req: AuthenticatedRequest, res): Promise<void> => {
   const userId = requireUserId(req);
   const original = await getExecution(userId, Number(req.params.id));
   const replay = await getExecution(userId, Number(req.body?.replayExecutionId));
@@ -678,7 +465,7 @@ router.post("/executions/:id/compare", async (req, res): Promise<void> => {
   }});
 });
 
-router.post("/simulations/:id/recovery", async (req, res): Promise<void> => {
+router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res): Promise<void> => {
   const simulation = await getSimulation(requireUserId(req), Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
   const workflow = Array.isArray(req.body?.workflow) ? req.body.workflow : simulation.workflow;
@@ -690,7 +477,7 @@ router.post("/simulations/:id/recovery", async (req, res): Promise<void> => {
   res.status(201).json({ executions, recovered: executions.at(-1)?.status === "success" });
 });
 
-router.post("/executions/:id/replay", async (req, res): Promise<void> => {
+router.post("/executions/:id/replay", async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = ReplayExecutionParams.safeParse(req.params);
   const parsed = ReplayExecutionBody.safeParse(req.body ?? {});
   if (!params.success) {
@@ -712,7 +499,7 @@ router.post("/executions/:id/replay", async (req, res): Promise<void> => {
     return;
   }
   const replay = await executeSimulation(simulation, parsed.data as RunOverrides, {
-    method: execution.method as HttpMethod,
+    method: toHttpMethod(execution.method),
     headers: execution.requestHeaders,
     queryParams: execution.requestQuery,
     requestBody: execution.requestBody,
@@ -785,7 +572,7 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
   const suffix = typeof req.params[1] === "string" ? req.params[1] : "";
   const body = req.body && typeof req.body === "object" ? JSON.stringify(req.body) : typeof req.body === "string" ? req.body : null;
   const execution = await executeSimulation(simulation, {}, {
-    method: ["GET", "POST", "PUT", "PATCH", "DELETE"].includes(req.method) ? (req.method as HttpMethod) : "POST",
+    method: toHttpMethod(req.method),
     headers,
     queryParams,
     requestBody: body,
