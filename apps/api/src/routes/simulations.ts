@@ -6,7 +6,10 @@ import { db, executionsTable, integrationCredentialsTable, simulationsTable } fr
 import { canAccessTeam, ensureUser, getAccessibleSimulation, requireUserId, simulationAccess } from "../lib/workspace.js";
 import type { AuthenticatedRequest } from "../middleware/auth.js";
 import { createSimulationExecutor } from "../engine/execute.js";
-import { toHttpMethod, type RunOverrides } from "../engine/types.js";
+import { createDrizzleEngineDatabase } from "../engine/drizzleDatabase.js";
+import { reproduceExecution } from "../engine/replay.js";
+import { deriveSeed, generateSeed } from "../engine/prng.js";
+import { toFailureType, toHttpMethod, type RunOverrides } from "../engine/types.js";
 
 import {
   CreateSimulationBody,
@@ -34,7 +37,7 @@ import {
 const router = Router();
 
 const now = () => new Date();
-const executeSimulation = createSimulationExecutor({ db });
+const executeSimulation = createSimulationExecutor({ db: createDrizzleEngineDatabase(db) });
 
 function parseId(value: string | string[] | undefined): number | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -273,7 +276,7 @@ router.post("/simulations", async (req: AuthenticatedRequest, res): Promise<void
       forwardTimeoutMs: data.forwardTimeoutMs ?? 10000,
       preserveHeaders: data.preserveHeaders ?? true,
       executionToken: null,
-      allowedOrigins: data.allowedOrigins ?? [],
+      allowedOrigins: [],
       enabled: data.enabled ?? true,
     })
     .returning();
@@ -469,10 +472,19 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
   const simulation = await getSimulation(requireUserId(req), Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
   const workflow = Array.isArray(req.body?.workflow) ? req.body.workflow : simulation.workflow;
+  const requestedSeed = Number(req.body?.seed);
+  const baseSeed = Number.isInteger(requestedSeed) && requestedSeed >= 0 && requestedSeed <= 0xffffffff ? requestedSeed : generateSeed();
+  let attemptIndex = 0;
   const executions = [];
   for (const step of workflow ?? []) {
     const attempts = Math.max(1, Math.min(100, Number(step.attempts ?? 1)));
-    for (let attempt = 0; attempt < attempts; attempt++) executions.push(await executeSimulation(simulation, { ...step, seed: Number(req.body?.seed ?? simulation.id) + attempt }));
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      executions.push(await executeSimulation(simulation, {
+        ...step,
+        failureType: toFailureType(step.failureType),
+        seed: deriveSeed(baseSeed, attemptIndex++),
+      }));
+    }
   }
   res.status(201).json({ executions, recovered: executions.at(-1)?.status === "success" });
 });
@@ -498,12 +510,27 @@ router.post("/executions/:id/replay", async (req: AuthenticatedRequest, res): Pr
     res.status(404).json({ error: "Simulation not found" });
     return;
   }
-  const replay = await executeSimulation(simulation, parsed.data as RunOverrides, {
+  const replayOverrides: RunOverrides = {
+    failureType: parsed.data.failureType,
+    statusCode: parsed.data.statusCode,
+    latencyMs: parsed.data.latencyMs,
+    responseBody: parsed.data.responseBody,
+    seed: parsed.data.seed,
+  };
+  const requestOverrides = {
     method: toHttpMethod(execution.method),
     headers: execution.requestHeaders,
     queryParams: execution.requestQuery,
     requestBody: execution.requestBody,
-  });
+  };
+  const mode = parsed.data.mode ?? "reproduce";
+  if (mode === "reproduce" && (execution.seed === null || execution.configSnapshot === null)) {
+    res.status(409).json({ error: "Deterministic replay is unavailable for this older execution. Select reexecute mode." });
+    return;
+  }
+  const replay = mode === "reproduce"
+    ? await reproduceExecution(execution, simulation, {}, executeSimulation)
+    : await executeSimulation(simulation, replayOverrides, requestOverrides);
   res.status(201).json(ReplayExecutionResponse.parse(replay));
 });
 

@@ -102,8 +102,6 @@ export interface Simulation {
   /** @minimum 0 */
   forwardTimeoutMs: number;
   preserveHeaders: boolean;
-  executionToken?: string | null;
-  allowedOrigins: string[];
   enabled: boolean;
   /** @minimum 0 */
   requestCount: number;
@@ -170,7 +168,6 @@ export interface SimulationInput {
      */
   forwardTimeoutMs?: number;
   preserveHeaders?: boolean;
-  allowedOrigins?: string[];
   enabled?: boolean;
 }
 
@@ -226,7 +223,6 @@ export interface SimulationUpdate {
      */
   forwardTimeoutMs?: number;
   preserveHeaders?: boolean;
-  allowedOrigins?: string[];
   enabled?: boolean;
 }
 
@@ -249,10 +245,7 @@ export interface Execution {
   /** @nullable */
   requestBody?: string | null;
   failureType: FailureType;
-  source: 'dashboard' | 'external';
-  tokenAuthenticated: boolean;
   /** @nullable */
-  requestIp?: string | null;
   simulatedStatus?: number | null;
   responseHeaders: KeyValueMap;
   /** @nullable */
@@ -281,9 +274,47 @@ export interface RunSimulationInput {
      */
   latencyMs?: number;
   responseBody?: string;
+  /**
+     * Explicit unsigned 32-bit seed; omitted seeds are generated securely.
+     * @minimum 0
+     * @maximum 4294967295
+     */
+  seed?: number;
 }
 
-export type ReplayInput = RunSimulationInput;
+/**
+ * reproduce uses the stored seed and configuration without upstream calls; reexecute uses the latest simulation configuration and may call upstream.
+ */
+export type ReplayInputMode = typeof ReplayInputMode[keyof typeof ReplayInputMode];
+
+
+export const ReplayInputMode = {
+  reproduce: 'reproduce',
+  reexecute: 'reexecute',
+} as const;
+
+export interface ReplayInput {
+  /** reproduce uses the stored seed and configuration without upstream calls; reexecute uses the latest simulation configuration and may call upstream. */
+  mode?: ReplayInputMode;
+  failureType?: FailureType;
+  /**
+     * @minimum 100
+     * @maximum 599
+     */
+  statusCode?: number;
+  /**
+     * @minimum 0
+     * @maximum 120000
+     */
+  latencyMs?: number;
+  responseBody?: string;
+  /**
+     * Used only in reexecute mode; reproduce always uses the stored seed.
+     * @minimum 0
+     * @maximum 4294967295
+     */
+  seed?: number;
+}
 
 export interface CompareExecutionsInput {
   /** @minimum 1 */
@@ -322,6 +353,10 @@ export interface WorkflowStep {
 }
 
 export interface RecoveryWorkflowInput {
+  /**
+     * @minimum 0
+     * @maximum 4294967295
+     */
   seed?: number;
   workflow?: WorkflowStep[];
 }

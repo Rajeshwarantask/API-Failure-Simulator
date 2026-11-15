@@ -1,22 +1,30 @@
-import { eq } from "drizzle-orm";
-import { db as database, executionsTable, simulationsTable } from "@workspace/db";
-import type { Simulation } from "@workspace/db";
+import type { Execution, ExecutionConfigSnapshot, NewExecution, Simulation } from "@workspace/db";
 import { deriveResponseBody, decideFailure } from "./decide.js";
 import { matchConditions } from "./matchConditions.js";
+import { generateSeed } from "./prng.js";
 import { toFailureType, toHttpMethod, type FailureType, type HttpMethod, type RequestOverrides, type RunOverrides } from "./types.js";
 
-export type EngineDependencies = {
-  db: typeof database;
-  fetch: typeof fetch;
-  sleep: (milliseconds: number) => Promise<void>;
-  now: () => Date;
+export type ExecutionInsert = NewExecution;
+export type SimulationCounters = Pick<Simulation, "requestCount" | "failedCount" | "successCount" | "lastExecutedAt" | "updatedAt">;
+
+export type EngineDatabase = {
+  persistExecution: (values: ExecutionInsert) => Promise<Execution>;
+  updateSimulationCounters: (simulationId: number, values: SimulationCounters) => Promise<void>;
 };
 
-const defaultDependencies: EngineDependencies = {
-  db: database,
+export type EngineDependencies = {
+  db: EngineDatabase;
+  fetch?: typeof fetch;
+  sleep?: (milliseconds: number) => Promise<void>;
+  now?: () => Date;
+  createSeed?: () => number;
+};
+
+const defaultDependencies = {
   fetch,
-  sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  sleep: (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
   now: () => new Date(),
+  createSeed: generateSeed,
 };
 
 export function buildUrl(targetUrl: string, query: Record<string, string>): string {
@@ -40,15 +48,54 @@ function createTimeline(type: FailureType, baseTime: Date) {
   ];
 }
 
-export function createSimulationExecutor(dependencies: Partial<EngineDependencies> = {}) {
+function createConfigSnapshot(
+  simulation: Simulation,
+  overrides: RunOverrides,
+  request: RequestOverrides,
+): ExecutionConfigSnapshot {
+  return {
+    simulation: {
+      targetUrl: simulation.targetUrl,
+      method: simulation.method,
+      headers: simulation.headers,
+      queryParams: simulation.queryParams,
+      requestBody: simulation.requestBody,
+      failureType: simulation.failureType,
+      statusCode: simulation.statusCode,
+      responseBody: simulation.responseBody,
+      latencyMs: simulation.latencyMs,
+      timeoutMs: simulation.timeoutMs,
+      probability: simulation.probability,
+      conditions: simulation.conditions,
+      workflow: simulation.workflow,
+      enabled: simulation.enabled,
+      forwardRequest: simulation.forwardRequest,
+      forwardTimeoutMs: simulation.forwardTimeoutMs,
+      preserveHeaders: simulation.preserveHeaders,
+    },
+    overrides: {
+      failureType: overrides.failureType,
+      statusCode: overrides.statusCode,
+      latencyMs: overrides.latencyMs,
+      responseBody: overrides.responseBody,
+      workflow: overrides.workflow,
+    },
+    request,
+  };
+}
+
+export function createSimulationExecutor(dependencies: EngineDependencies) {
   const engine = { ...defaultDependencies, ...dependencies };
 
   return async function executeSimulation(
     simulation: Simulation,
     overrides: RunOverrides = {},
     requestOverrides: RequestOverrides = {},
+    options: { allowUpstream?: boolean } = {},
   ) {
     const startedAt = engine.now();
+    const seed = overrides.seed ?? engine.createSeed();
+    const configSnapshot = createConfigSnapshot(simulation, overrides, requestOverrides);
     const method: HttpMethod = requestOverrides.method ?? toHttpMethod(simulation.method);
     const requestHeaders = requestOverrides.headers ?? simulation.headers;
     const requestQuery = requestOverrides.queryParams ?? simulation.queryParams;
@@ -67,7 +114,7 @@ export function createSimulationExecutor(dependencies: Partial<EngineDependencie
       ? toFailureType(workflowStep.failureType)
       : overrides.failureType ?? (simulation.enabled && conditionsMatch ? toFailureType(simulation.failureType) : "none");
     const probability = simulation.enabled && conditionsMatch ? simulation.probability : 0;
-    const decision = decideFailure(configuredFailure, probability, overrides.seed ?? simulation.id, overrides.statusCode ?? simulation.statusCode);
+    const decision = decideFailure(configuredFailure, probability, seed, overrides.statusCode ?? simulation.statusCode);
     const failureType = decision.failureType;
     const isTimeout = failureType === "timeout";
     const isFailure = failureType !== "none" && failureType !== "latency";
@@ -101,7 +148,7 @@ export function createSimulationExecutor(dependencies: Partial<EngineDependencie
     } else {
       if (configuredLatency > 0) await engine.sleep(configuredLatency);
 
-      const shouldForward = simulation.forwardRequest || requestOverrides.source === "external";
+      const shouldForward = options.allowUpstream !== false && (simulation.forwardRequest || requestOverrides.source === "external");
       if ((failureType === "none" || failureType === "latency") && shouldForward) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), Math.max(0, simulation.forwardTimeoutMs ?? 10000));
@@ -139,10 +186,12 @@ export function createSimulationExecutor(dependencies: Partial<EngineDependencie
       actualLatencyMs = Math.max(actualLatencyMs, engine.now().getTime() - startedAt.getTime());
     }
 
-    const [execution] = await engine.db.insert(executionsTable).values({
+    const execution = await engine.db.persistExecution({
       ownerId: simulation.ownerId,
       teamId: simulation.teamId,
       simulationId: simulation.id,
+      seed,
+      configSnapshot,
       method,
       url: buildUrl(effectiveTargetUrl, requestQuery),
       requestHeaders,
@@ -159,14 +208,14 @@ export function createSimulationExecutor(dependencies: Partial<EngineDependencie
       requestIp: requestOverrides.requestIp ?? null,
       timeline: createTimeline(failureType, startedAt),
       createdAt: startedAt,
-    }).returning();
-    await engine.db.update(simulationsTable).set({
+    });
+    await engine.db.updateSimulationCounters(simulation.id, {
       requestCount: simulation.requestCount + 1,
       failedCount: simulation.failedCount + (isFailure || status === "timeout" ? 1 : 0),
       successCount: simulation.successCount + (isFailure || status === "timeout" ? 0 : 1),
       lastExecutedAt: startedAt,
       updatedAt: startedAt,
-    }).where(eq(simulationsTable.id, simulation.id));
+    });
     return execution;
   };
 }

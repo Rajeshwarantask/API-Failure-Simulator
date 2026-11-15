@@ -35,15 +35,12 @@ export const GetDashboardSummaryResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(getDashboardSummaryResponseRecentRunsItemActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -86,8 +83,8 @@ export const ListSimulationsResponseItem = zod.object({
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-  "headers": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "queryParams": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "headers": zod.record(zod.string(), zod.string()),
+  "queryParams": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
   "statusCode": zod.number().int().nullish(),
@@ -105,8 +102,6 @@ export const ListSimulationsResponseItem = zod.object({
   "forwardRequest": zod.boolean(),
   "forwardTimeoutMs": zod.number().int().min(listSimulationsResponseForwardTimeoutMsMin),
   "preserveHeaders": zod.boolean(),
-  "executionToken": zod.string().nullish(),
-  "allowedOrigins": zod.array(zod.string()),
   "enabled": zod.boolean(),
   "requestCount": zod.number().int().min(listSimulationsResponseRequestCountMin),
   "failedCount": zod.number().int().min(listSimulationsResponseFailedCountMin),
@@ -167,7 +162,6 @@ export const CreateSimulationBody = zod.object({
   "forwardRequest": zod.boolean().optional(),
   "forwardTimeoutMs": zod.number().int().min(createSimulationBodyForwardTimeoutMsMin).max(createSimulationBodyForwardTimeoutMsMax).optional(),
   "preserveHeaders": zod.boolean().optional(),
-  "allowedOrigins": zod.array(zod.string()).optional(),
   "enabled": zod.boolean().optional()
 })
 
@@ -197,8 +191,8 @@ export const CreateSimulationResponse = zod.object({
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-  "headers": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "queryParams": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "headers": zod.record(zod.string(), zod.string()),
+  "queryParams": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
   "statusCode": zod.number().int().nullish(),
@@ -216,8 +210,6 @@ export const CreateSimulationResponse = zod.object({
   "forwardRequest": zod.boolean(),
   "forwardTimeoutMs": zod.number().int().min(createSimulationResponseForwardTimeoutMsMin),
   "preserveHeaders": zod.boolean(),
-  "executionToken": zod.string().nullish(),
-  "allowedOrigins": zod.array(zod.string()),
   "enabled": zod.boolean(),
   "requestCount": zod.number().int().min(createSimulationResponseRequestCountMin),
   "failedCount": zod.number().int().min(createSimulationResponseFailedCountMin),
@@ -267,8 +259,8 @@ export const GetSimulationResponse = zod.object({
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-  "headers": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "queryParams": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "headers": zod.record(zod.string(), zod.string()),
+  "queryParams": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
   "statusCode": zod.number().int().nullish(),
@@ -286,8 +278,6 @@ export const GetSimulationResponse = zod.object({
   "forwardRequest": zod.boolean(),
   "forwardTimeoutMs": zod.number().int().min(getSimulationResponseOneForwardTimeoutMsMin),
   "preserveHeaders": zod.boolean(),
-  "executionToken": zod.string().nullish(),
-  "allowedOrigins": zod.array(zod.string()),
   "enabled": zod.boolean(),
   "requestCount": zod.number().int().min(getSimulationResponseOneRequestCountMin),
   "failedCount": zod.number().int().min(getSimulationResponseOneFailedCountMin),
@@ -302,15 +292,12 @@ export const GetSimulationResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(getSimulationResponseTwoExecutionsItemActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -379,7 +366,6 @@ export const UpdateSimulationBody = zod.object({
   "forwardRequest": zod.boolean().optional(),
   "forwardTimeoutMs": zod.number().int().min(updateSimulationBodyForwardTimeoutMsMin).max(updateSimulationBodyForwardTimeoutMsMax).optional(),
   "preserveHeaders": zod.boolean().optional(),
-  "allowedOrigins": zod.array(zod.string()).optional(),
   "enabled": zod.boolean().optional()
 })
 
@@ -409,8 +395,8 @@ export const UpdateSimulationResponse = zod.object({
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-  "headers": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "queryParams": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "headers": zod.record(zod.string(), zod.string()),
+  "queryParams": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
   "statusCode": zod.number().int().nullish(),
@@ -428,8 +414,6 @@ export const UpdateSimulationResponse = zod.object({
   "forwardRequest": zod.boolean(),
   "forwardTimeoutMs": zod.number().int().min(updateSimulationResponseForwardTimeoutMsMin),
   "preserveHeaders": zod.boolean(),
-  "executionToken": zod.string().nullish(),
-  "allowedOrigins": zod.array(zod.string()),
   "enabled": zod.boolean(),
   "requestCount": zod.number().int().min(updateSimulationResponseRequestCountMin),
   "failedCount": zod.number().int().min(updateSimulationResponseFailedCountMin),
@@ -473,15 +457,12 @@ export const ListExecutionsResponseItem = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(listExecutionsResponseActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -511,13 +492,17 @@ export const runSimulationBodyStatusCodeMax = 599;
 export const runSimulationBodyLatencyMsMin = 0;
 export const runSimulationBodyLatencyMsMax = 120000;
 
+export const runSimulationBodySeedMin = 0;
+export const runSimulationBodySeedMax = 4294967295;
+
 
 
 export const RunSimulationBody = zod.object({
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']).optional(),
   "statusCode": zod.number().int().min(runSimulationBodyStatusCodeMin).max(runSimulationBodyStatusCodeMax).optional(),
   "latencyMs": zod.number().int().min(runSimulationBodyLatencyMsMin).max(runSimulationBodyLatencyMsMax).optional(),
-  "responseBody": zod.string().optional()
+  "responseBody": zod.string().optional(),
+  "seed": zod.number().int().min(runSimulationBodySeedMin).max(runSimulationBodySeedMax).optional().describe('Explicit unsigned 32-bit seed; omitted seeds are generated securely.')
 })
 
 export const runSimulationResponseActualLatencyMsMin = 0;
@@ -529,15 +514,12 @@ export const RunSimulationResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(runSimulationResponseActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -569,15 +551,12 @@ export const GetExecutionResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(getExecutionResponseActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -591,6 +570,7 @@ export const GetExecutionResponse = zod.object({
 
 
 /**
+ * Reproduce the original decision from its stored seed and immutable configuration snapshot by default. Reexecute uses the latest simulation configuration and may call the upstream target.
  * @summary Replay an execution with optional overrides
  */
 
@@ -600,19 +580,25 @@ export const ReplayExecutionParams = zod.object({
   "id": zod.coerce.number().int().min(1)
 })
 
+export const replayExecutionBodyModeDefault = `reproduce`;
 export const replayExecutionBodyStatusCodeMin = 100;
 export const replayExecutionBodyStatusCodeMax = 599;
 
 export const replayExecutionBodyLatencyMsMin = 0;
 export const replayExecutionBodyLatencyMsMax = 120000;
 
+export const replayExecutionBodySeedMin = 0;
+export const replayExecutionBodySeedMax = 4294967295;
+
 
 
 export const ReplayExecutionBody = zod.object({
+  "mode": zod.enum(['reproduce', 'reexecute']).default(replayExecutionBodyModeDefault).describe('reproduce uses the stored seed and configuration without upstream calls; reexecute uses the latest simulation configuration and may call upstream.'),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']).optional(),
   "statusCode": zod.number().int().min(replayExecutionBodyStatusCodeMin).max(replayExecutionBodyStatusCodeMax).optional(),
   "latencyMs": zod.number().int().min(replayExecutionBodyLatencyMsMin).max(replayExecutionBodyLatencyMsMax).optional(),
-  "responseBody": zod.string().optional()
+  "responseBody": zod.string().optional(),
+  "seed": zod.number().int().min(replayExecutionBodySeedMin).max(replayExecutionBodySeedMax).optional().describe('Used only in reexecute mode; reproduce always uses the stored seed.')
 })
 
 export const replayExecutionResponseActualLatencyMsMin = 0;
@@ -624,15 +610,12 @@ export const ReplayExecutionResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(replayExecutionResponseActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -674,15 +657,12 @@ export const CompareExecutionsResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(compareExecutionsResponseOriginalActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -698,15 +678,12 @@ export const CompareExecutionsResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(compareExecutionsResponseReplayActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),
@@ -737,6 +714,9 @@ export const CreateRecoveryWorkflowParams = zod.object({
   "id": zod.coerce.number().int().min(1)
 })
 
+export const createRecoveryWorkflowBodySeedMin = 0;
+export const createRecoveryWorkflowBodySeedMax = 4294967295;
+
 export const createRecoveryWorkflowBodyWorkflowItemStatusCodeMin = 100;
 export const createRecoveryWorkflowBodyWorkflowItemStatusCodeMax = 599;
 
@@ -747,7 +727,7 @@ export const createRecoveryWorkflowBodyWorkflowItemLatencyMsMin = 0;
 
 
 export const CreateRecoveryWorkflowBody = zod.object({
-  "seed": zod.number().int().optional(),
+  "seed": zod.number().int().min(createRecoveryWorkflowBodySeedMin).max(createRecoveryWorkflowBodySeedMax).optional(),
   "workflow": zod.array(zod.object({
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
   "statusCode": zod.number().int().min(createRecoveryWorkflowBodyWorkflowItemStatusCodeMin).max(createRecoveryWorkflowBodyWorkflowItemStatusCodeMax).nullish(),
@@ -766,15 +746,12 @@ export const CreateRecoveryWorkflowResponse = zod.object({
   "simulationId": zod.number().int(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "url": zod.string(),
-  "requestHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
-  "requestQuery": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "requestHeaders": zod.record(zod.string(), zod.string()),
+  "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
-  "source": zod.enum(['dashboard', 'external']),
-  "tokenAuthenticated": zod.boolean(),
-  "requestIp": zod.string().nullish(),
   "simulatedStatus": zod.number().int().nullish(),
-  "responseHeaders": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+  "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
   "actualLatencyMs": zod.number().int().min(createRecoveryWorkflowResponseExecutionsItemActualLatencyMsMin),
   "status": zod.enum(['success', 'failure', 'timeout']),

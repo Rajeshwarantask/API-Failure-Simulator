@@ -1,4 +1,4 @@
-import { seededRandom } from "./prng.js";
+import { mulberry32 } from "./prng.js";
 import type { FailureType } from "./types.js";
 
 export const failureStatuses: Partial<Record<FailureType, number>> = {
@@ -25,7 +25,7 @@ export function decideFailure(
   statusCodeOverride?: number | null,
 ): FailureDecision {
   const boundedProbability = Math.max(0, Math.min(100, probability));
-  const random = seededRandom(seed);
+  const random = mulberry32(seed);
   const injected = configuredFailure !== "none" && (
     boundedProbability >= 100 ||
     (boundedProbability > 0 && random() * 100 < boundedProbability)

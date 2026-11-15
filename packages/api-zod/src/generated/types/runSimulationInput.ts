@@ -20,4 +20,10 @@ export interface RunSimulationInput {
      */
   latencyMs?: number;
   responseBody?: string;
+  /**
+     * Explicit unsigned 32-bit seed; omitted seeds are generated securely.
+     * @minimum 0
+     * @maximum 4294967295
+     */
+  seed?: number;
 }

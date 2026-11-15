@@ -177,6 +177,7 @@ paths:
       operationId: replayExecution
       tags: [simulations]
       summary: Replay an execution with optional overrides
+      description: Reproduce the original decision from its stored seed and immutable configuration snapshot by default. Reexecute uses the latest simulation configuration and may call the upstream target.
       parameters:
         - $ref: "#/components/parameters/ExecutionId"
       requestBody:
@@ -499,8 +500,21 @@ components:
         statusCode: { type: integer, minimum: 100, maximum: 599 }
         latencyMs: { type: integer, minimum: 0, maximum: 120000 }
         responseBody: { type: string }
+        seed: { type: integer, minimum: 0, maximum: 4294967295, description: Explicit unsigned 32-bit seed; omitted seeds are generated securely. }
     ReplayInput:
-      $ref: "#/components/schemas/RunSimulationInput"
+      type: object
+      properties:
+        mode:
+          type: string
+          enum: [reproduce, reexecute]
+          default: reproduce
+          description: reproduce uses the stored seed and configuration without upstream calls; reexecute uses the latest simulation configuration and may call upstream.
+        failureType:
+          $ref: "#/components/schemas/FailureType"
+        statusCode: { type: integer, minimum: 100, maximum: 599 }
+        latencyMs: { type: integer, minimum: 0, maximum: 120000 }
+        responseBody: { type: string }
+        seed: { type: integer, minimum: 0, maximum: 4294967295, description: Used only in reexecute mode; reproduce always uses the stored seed. }
     CompareExecutionsInput:
       type: object
       required: [replayExecutionId]
@@ -532,7 +546,7 @@ components:
     RecoveryWorkflowInput:
       type: object
       properties:
-        seed: { type: integer }
+        seed: { type: integer, minimum: 0, maximum: 4294967295 }
         workflow:
           type: array
           items: { $ref: "#/components/schemas/WorkflowStep" }

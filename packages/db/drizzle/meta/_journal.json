@@ -29,6 +29,13 @@
       "when": 1791031200000,
       "tag": "0004_integration_execution_metadata",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794734703504,
+      "tag": "0005_execution_determinism",
+      "breakpoints": true
     }
   ]
 }

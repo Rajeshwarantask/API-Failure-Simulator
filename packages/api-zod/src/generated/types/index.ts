@@ -19,6 +19,7 @@ export * from './keyValueMap';
 export * from './recoveryWorkflowInput';
 export * from './recoveryWorkflowResult';
 export * from './replayInput';
+export * from './replayInputMode';
 export * from './runSimulationInput';
 export * from './simulation';
 export * from './simulationConditions';
