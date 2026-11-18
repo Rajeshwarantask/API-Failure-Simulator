@@ -22,9 +22,8 @@ export function SimulationExecutionList({
       {executions.length === 0 ? (
         <div className="px-6 py-14 text-center">
           <History size={22} className="mx-auto text-muted-foreground/50" />
-          <h3 className="mt-3 text-sm font-semibold">No runs recorded</h3>
-          <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Run this simulation to see the decision timeline.</p>
-          <div className="mt-4"><Button onClick={onRun} data-testid="button-empty-run"><Play size={13} /> Run simulation</Button></div>
+          <p className="mx-auto mt-3 max-w-sm text-xs leading-5 text-muted-foreground">No executions yet. Click Run now.</p>
+          <div className="mt-4"><Button onClick={onRun} data-testid="button-empty-run"><Play size={13} /> Run now</Button></div>
         </div>
       ) : (
         <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain scroll-smooth scrollbar-thin" data-testid="simulation-executions-scroll">

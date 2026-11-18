@@ -62,7 +62,7 @@ describe("target URL policy", () => {
   });
 
   it("allows unresolved seeded hostnames without DNS and rejects bad schemes", async () => {
-    await expect(validateTargetUrl("https://profiles.internal.example/v1/me", false)).resolves.toBeInstanceOf(URL);
+    await expect(validateTargetUrl("https://profile-service.example.test/v1/me", false)).resolves.toBeInstanceOf(URL);
     await expect(
       validateTargetUrl("https://public.test/resource", false),
     ).resolves.toBeInstanceOf(URL);

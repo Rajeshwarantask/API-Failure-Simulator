@@ -26,9 +26,8 @@ export function DashboardRecentRuns({
       {runs.length === 0 ? (
         <div className="px-6 py-14 text-center">
           <Activity size={22} className="mx-auto text-muted-foreground/50" />
-          <h3 className="mt-3 text-sm font-semibold">No executions yet</h3>
-          <p className="mx-auto mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Run a simulation to begin building an observable failure history.</p>
-          <div className="mt-4"><Link href="/simulations" data-testid="link-browse-simulations" className="text-xs font-semibold text-primary">Browse simulations <ChevronRight size={13} className="inline" /></Link></div>
+          <p className="mx-auto mt-3 max-w-sm text-xs leading-5 text-muted-foreground">No test runs yet. Run a simulation to see results here.</p>
+          <div className="mt-4"><Link href="/simulations" data-testid="link-browse-simulations" className="text-xs font-semibold text-primary">Run a simulation <ChevronRight size={13} className="inline" /></Link></div>
         </div>
       ) : (
         <div className="min-h-0 min-w-0 flex-1 overflow-auto overscroll-contain scroll-smooth scrollbar-thin" data-testid="recent-executions-scroll" onScroll={onScroll}>
