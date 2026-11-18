@@ -107,92 +107,6 @@ function mapSimulation(simulation: typeof simulationsTable.$inferSelect) {
   };
 }
 
-async function seedIfEmpty(userId: string, email?: string): Promise<void> {
-  await ensureUser(userId, email);
-  const existing = await db.select({ id: simulationsTable.id }).from(simulationsTable).where(eq(simulationsTable.ownerId, userId)).limit(1);
-  if (existing.length > 0) return;
-
-  await db.insert(simulationsTable).values([
-    {
-      ownerId: userId,
-      teamId: null,
-      name: "Payments · upstream 500",
-      description: "Exercise retry and customer messaging when the payments provider is unavailable.",
-      targetUrl: "https://api.stripe.com/v1/payment_intents",
-      method: "POST",
-      headers: { "content-type": "application/json", "x-client-version": "2026.09" },
-      queryParams: {},
-      requestBody: JSON.stringify({ amount: 2400, currency: "usd" }, null, 2),
-      failureType: "http_500",
-      statusCode: 500,
-      responseBody: JSON.stringify({ error: { type: "api_error", message: "The upstream service is unavailable." } }, null, 2),
-      latencyMs: 820,
-      timeoutMs: 5000,
-      probability: 100,
-      forwardRequest: true,
-      forwardTimeoutMs: 3500,
-      preserveHeaders: true,
-      executionToken: null,
-      allowedOrigins: [],
-      enabled: true,
-      requestCount: 48,
-      failedCount: 37,
-      successCount: 11,
-    },
-    {
-      ownerId: userId,
-      teamId: null,
-      name: "Search · rate limit",
-      description: "Check that the search client backs off and respects Retry-After.",
-      targetUrl: "https://api.acme-search.dev/v2/query",
-      method: "GET",
-      headers: { accept: "application/json" },
-      queryParams: { q: "reliability", limit: "20" },
-      requestBody: null,
-      failureType: "http_429",
-      statusCode: 429,
-      responseBody: JSON.stringify({ error: "rate_limited", retryAfter: 30 }, null, 2),
-      latencyMs: 120,
-      timeoutMs: 3000,
-      probability: 65,
-      forwardRequest: false,
-      forwardTimeoutMs: 3000,
-      preserveHeaders: true,
-      executionToken: null,
-      allowedOrigins: [],
-      enabled: true,
-      requestCount: 19,
-      failedCount: 13,
-      successCount: 6,
-    },
-    {
-      ownerId: userId,
-      teamId: null,
-      name: "Profile · timeout recovery",
-      description: "Validate request cancellation and recovery when a profile service stalls.",
-      targetUrl: "https://profiles.internal.example/v1/me",
-      method: "GET",
-      headers: { accept: "application/json", authorization: "Bearer <token>" },
-      queryParams: {},
-      requestBody: null,
-      failureType: "timeout",
-      statusCode: null,
-      responseBody: null,
-      latencyMs: 0,
-      timeoutMs: 8000,
-      probability: 100,
-      forwardRequest: false,
-      forwardTimeoutMs: 5000,
-      preserveHeaders: false,
-      enabled: false,
-      requestCount: 7,
-      failedCount: 7,
-      successCount: 0,
-    },
-  ]);
-}
-
-
 async function getSimulation(userId: string, id: number) {
   return getAccessibleSimulation(userId, id);
 }
@@ -221,7 +135,7 @@ router.get("/dashboard/executions", async (req: AuthenticatedRequest, res: Respo
 });
 
 router.get("/dashboard", async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-  await seedIfEmpty(requireUserId(req), (req as AuthenticatedRequest).userEmail);
+  await ensureUser(requireUserId(req), req.userEmail);
   const userId = requireUserId(req);
   const simulations = await db.select().from(simulationsTable).where(simulationAccess(userId));
   const recent = await db.select({ execution: executionsTable }).from(executionsTable).innerJoin(simulationsTable, eq(executionsTable.simulationId, simulationsTable.id)).where(simulationAccess(userId)).orderBy(desc(executionsTable.createdAt)).limit(8).then(rows => rows.map(row => row.execution));
@@ -237,7 +151,7 @@ router.get("/dashboard", async (req: AuthenticatedRequest, res: Response): Promi
 });
 
 router.get("/simulations", async (req: AuthenticatedRequest, res): Promise<void> => {
-  await seedIfEmpty(requireUserId(req), (req as AuthenticatedRequest).userEmail);
+  await ensureUser(requireUserId(req), req.userEmail);
   const simulations = await db.select().from(simulationsTable).where(simulationAccess(requireUserId(req))).orderBy(desc(simulationsTable.updatedAt));
   res.json(ListSimulationsResponse.parse(simulations.map(mapSimulation)));
 });
