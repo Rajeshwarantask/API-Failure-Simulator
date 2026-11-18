@@ -8,6 +8,10 @@
 import type { WorkflowStep } from './workflowStep';
 
 export interface RecoveryWorkflowInput {
+  /**
+     * @minimum 0
+     * @maximum 4294967295
+     */
   seed?: number;
   workflow?: WorkflowStep[];
 }

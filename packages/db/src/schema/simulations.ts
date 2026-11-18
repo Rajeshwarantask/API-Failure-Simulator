@@ -1,4 +1,4 @@
-import { boolean, index, integer, jsonb, pgTable, real, serial, text, timestamp, uuid, primaryKey } from "drizzle-orm/pg-core";
+import { bigint, boolean, index, integer, jsonb, pgTable, real, serial, text, timestamp, uuid, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -84,8 +84,56 @@ export const integrationCredentialsTable = pgTable("integration_credentials", {
   lastUsedIp: text("last_used_ip"),
 }, (table) => ({ simulationIdIdx: index("integration_credentials_simulation_id_idx").on(table.simulationId), ownerIdIdx: index("integration_credentials_owner_id_idx").on(table.ownerId) }));
 
+export type ExecutionConfigSnapshot = {
+  simulation: {
+    targetUrl: string;
+    method: string;
+    headers: Record<string, string>;
+    queryParams: Record<string, string>;
+    requestBody: string | null;
+    failureType: string;
+    statusCode: number | null;
+    responseBody: string | null;
+    latencyMs: number;
+    timeoutMs: number;
+    probability: number;
+    conditions: {
+      method?: string;
+      path?: string;
+      headers?: Record<string, string>;
+      queryParams?: Record<string, string>;
+      bodyContains?: string;
+    };
+    workflow: Array<{ failureType: string; statusCode?: number | null; attempts?: number; latencyMs?: number }>;
+    enabled: boolean;
+    forwardRequest: boolean;
+    forwardTimeoutMs: number;
+    preserveHeaders: boolean;
+  };
+  overrides: {
+    failureType?: string;
+    statusCode?: number;
+    latencyMs?: number;
+    responseBody?: string;
+    workflow?: Array<{ failureType: string; statusCode?: number; attempts?: number; latencyMs?: number }>;
+  };
+  request: {
+    method?: string;
+    headers?: Record<string, string>;
+    queryParams?: Record<string, string>;
+    requestBody?: string | null;
+    pathSuffix?: string;
+    source?: "dashboard" | "external";
+    tokenAuthenticated?: boolean;
+    requestIp?: string | null;
+  };
+};
+
 export const executionsTable = pgTable("executions", {
   id: serial("id").primaryKey(),
+  seed: bigint("seed", { mode: "number" }),
+  configSnapshot: jsonb("config_snapshot").$type<ExecutionConfigSnapshot>(),
+
   ownerId: uuid("owner_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
   teamId: integer("team_id").references(() => teamsTable.id, { onDelete: "set null" }),
   simulationId: integer("simulation_id").notNull().references(() => simulationsTable.id, { onDelete: "cascade" }),
@@ -121,3 +169,4 @@ export const insertSimulationSchema = createInsertSchema(simulationsTable).omit(
 export type InsertSimulation = z.infer<typeof insertSimulationSchema>;
 export type Simulation = typeof simulationsTable.$inferSelect;
 export type Execution = typeof executionsTable.$inferSelect;
+export type NewExecution = typeof executionsTable.$inferInsert;

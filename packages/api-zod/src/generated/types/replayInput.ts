@@ -5,6 +5,28 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import type { RunSimulationInput } from './runSimulationInput';
+import type { FailureType } from './failureType';
+import type { ReplayInputMode } from './replayInputMode';
 
-export type ReplayInput = RunSimulationInput;
+export interface ReplayInput {
+  /** reproduce uses the stored seed and configuration without upstream calls; reexecute uses the latest simulation configuration and may call upstream. */
+  mode?: ReplayInputMode;
+  failureType?: FailureType;
+  /**
+     * @minimum 100
+     * @maximum 599
+     */
+  statusCode?: number;
+  /**
+     * @minimum 0
+     * @maximum 120000
+     */
+  latencyMs?: number;
+  responseBody?: string;
+  /**
+     * Used only in reexecute mode; reproduce always uses the stored seed.
+     * @minimum 0
+     * @maximum 4294967295
+     */
+  seed?: number;
+}

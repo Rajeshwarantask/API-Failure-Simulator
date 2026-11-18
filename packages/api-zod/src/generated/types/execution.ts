@@ -21,10 +21,14 @@ export interface Execution {
   /** @nullable */
   requestBody?: string | null;
   failureType: FailureType;
-  source: 'dashboard' | 'external';
-  tokenAuthenticated: boolean;
+  /**
+     * Null for executions created before deterministic replay was introduced.
+     * @minimum 0
+     * @maximum 4294967295
+     * @nullable
+     */
+  seed: number | null;
   /** @nullable */
-  requestIp?: string | null;
   simulatedStatus?: number | null;
   responseHeaders: KeyValueMap;
   /** @nullable */

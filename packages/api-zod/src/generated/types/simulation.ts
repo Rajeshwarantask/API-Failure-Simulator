@@ -42,8 +42,6 @@ export interface Simulation {
   /** @minimum 0 */
   forwardTimeoutMs: number;
   preserveHeaders: boolean;
-  executionToken?: string | null;
-  allowedOrigins: string[];
   enabled: boolean;
   /** @minimum 0 */
   requestCount: number;

@@ -51,6 +51,5 @@ export interface SimulationUpdate {
      */
   forwardTimeoutMs?: number;
   preserveHeaders?: boolean;
-  allowedOrigins?: string[];
   enabled?: boolean;
 }

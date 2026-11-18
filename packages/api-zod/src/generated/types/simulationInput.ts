@@ -51,6 +51,5 @@ export interface SimulationInput {
      */
   forwardTimeoutMs?: number;
   preserveHeaders?: boolean;
-  allowedOrigins?: string[];
   enabled?: boolean;
 }

@@ -27,6 +27,7 @@ import type {
   HealthStatus,
   RecoveryWorkflowInput,
   RecoveryWorkflowResult,
+  ReplayInput,
   RunSimulationInput,
   Simulation,
   SimulationDetail,
@@ -873,10 +874,11 @@ export const getReplayExecutionUrl = (id: number,) => {
 }
 
 /**
+ * Reproduce the original decision from its stored seed and immutable configuration snapshot by default. Reexecute uses the latest simulation configuration and may call the upstream target.
  * @summary Replay an execution with optional overrides
  */
 export const replayExecution = async (id: number,
-    runSimulationInput?: RunSimulationInput, options?: Parameters<typeof customFetch>[1]): Promise<Execution> => {
+    replayInput?: ReplayInput, options?: Parameters<typeof customFetch>[1]): Promise<Execution> => {
 
     const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
     if (!h) return {};
@@ -897,7 +899,7 @@ return customFetch<Execution>(getReplayExecutionUrl(id),
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
-    body: JSON.stringify(runSimulationInput)
+    body: JSON.stringify(replayInput)
   }
 );}
 
@@ -935,9 +937,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ReplayExecutionMutationResult = NonNullable<Awaited<ReturnType<typeof replayExecution>>>
-    export type ReplayExecutionMutationBody = BodyType<RunSimulationInput> | undefined
+    export type ReplayExecutionMutationBody = BodyType<ReplayInput> | undefined
     export type ReplayExecutionMutationError = ErrorType<void>
-    export type ReplayExecutionMutationVariables = {id: number;data?: BodyType<RunSimulationInput>}
+    export type ReplayExecutionMutationVariables = {id: number;data?: BodyType<ReplayInput>}
 
     /**
  * @summary Replay an execution with optional overrides
