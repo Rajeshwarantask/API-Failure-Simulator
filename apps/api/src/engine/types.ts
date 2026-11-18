@@ -68,8 +68,14 @@ export function toFailureType(value: string): FailureType {
   return isFailureType(value) ? value : "none";
 }
 
+function isHttpMethod(value: string): value is HttpMethod {
+  return value === "GET" || value === "POST" || value === "PUT" || value === "PATCH" || value === "DELETE";
+}
+
 export function toHttpMethod(value: string): HttpMethod {
-  return value === "GET" || value === "POST" || value === "PUT" || value === "PATCH" || value === "DELETE"
-    ? value
-    : "GET";
+  return isHttpMethod(value) ? value : "GET";
+}
+
+export function toProxyHttpMethod(value: string): HttpMethod {
+  return isHttpMethod(value) ? value : "POST";
 }

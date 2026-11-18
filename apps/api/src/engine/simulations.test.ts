@@ -4,6 +4,7 @@ import { decideFailure } from "./decide.js";
 import { createSimulationExecutor, type EngineDatabase } from "./execute.js";
 import { legacySeededRandom } from "./legacySeededRandom.test-helper.js";
 import { deriveSeed, mulberry32 } from "./prng.js";
+import { toProxyHttpMethod } from "./types.js";
 import { reproduceExecution } from "./replay.js";
 import { proxyHeaders } from "../lib/proxy-headers.js";
 import { createSafeFetch, MAX_UPSTREAM_BODY_BYTES } from "../lib/target-url.js";
@@ -93,6 +94,11 @@ function fakeDatabase() {
 }
 
 describe("deterministic execution engine", () => {
+  it("preserves the proxy POST fallback for unsupported incoming methods", () => {
+    expect(toProxyHttpMethod("HEAD")).toBe("POST");
+    expect(toProxyHttpMethod("GET")).toBe("GET");
+  });
+
   it("does not resolve target hosts when forwarding is disabled", async () => {
     let resolutions = 0;
     const fetch = createSafeFetch({

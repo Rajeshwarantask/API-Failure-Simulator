@@ -11,7 +11,7 @@ import { reproduceExecution } from "../engine/replay.js";
 import { proxyHeaders } from "../lib/proxy-headers.js";
 import { validateTargetUrl } from "../lib/target-url.js";
 import { deriveSeed, generateSeed } from "../engine/prng.js";
-import { toFailureType, toHttpMethod, type RunOverrides } from "../engine/types.js";
+import { toFailureType, toHttpMethod, toProxyHttpMethod, type RunOverrides } from "../engine/types.js";
 
 import {
   CreateSimulationBody,
@@ -612,7 +612,7 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
   const suffix = typeof req.params[1] === "string" ? req.params[1] : "";
   const body = req.body && typeof req.body === "object" ? JSON.stringify(req.body) : typeof req.body === "string" ? req.body : null;
   const execution = await executeSimulation(simulation, {}, {
-    method: toHttpMethod(req.method),
+    method: toProxyHttpMethod(req.method),
     headers,
     queryParams,
     requestBody: body,
