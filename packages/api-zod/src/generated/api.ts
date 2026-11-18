@@ -20,6 +20,9 @@ export const HealthCheckResponse = zod.object({
 /**
  * @summary Get simulator dashboard summary
  */
+export const getDashboardSummaryResponseRecentRunsItemSeedMin = 0;
+export const getDashboardSummaryResponseRecentRunsItemSeedMax = 4294967295;
+
 export const getDashboardSummaryResponseRecentRunsItemActualLatencyMsMin = 0;
 
 
@@ -39,6 +42,7 @@ export const GetDashboardSummaryResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(getDashboardSummaryResponseRecentRunsItemSeedMin).max(getDashboardSummaryResponseRecentRunsItemSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -249,6 +253,9 @@ export const getSimulationResponseOneFailedCountMin = 0;
 
 export const getSimulationResponseOneSuccessCountMin = 0;
 
+export const getSimulationResponseTwoExecutionsItemSeedMin = 0;
+export const getSimulationResponseTwoExecutionsItemSeedMax = 4294967295;
+
 export const getSimulationResponseTwoExecutionsItemActualLatencyMsMin = 0;
 
 
@@ -296,6 +303,7 @@ export const GetSimulationResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(getSimulationResponseTwoExecutionsItemSeedMin).max(getSimulationResponseTwoExecutionsItemSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -448,6 +456,9 @@ export const ListExecutionsParams = zod.object({
   "id": zod.coerce.number().int().min(1)
 })
 
+export const listExecutionsResponseSeedMin = 0;
+export const listExecutionsResponseSeedMax = 4294967295;
+
 export const listExecutionsResponseActualLatencyMsMin = 0;
 
 
@@ -461,6 +472,7 @@ export const ListExecutionsResponseItem = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(listExecutionsResponseSeedMin).max(listExecutionsResponseSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -505,6 +517,9 @@ export const RunSimulationBody = zod.object({
   "seed": zod.number().int().min(runSimulationBodySeedMin).max(runSimulationBodySeedMax).optional().describe('Explicit unsigned 32-bit seed; omitted seeds are generated securely.')
 })
 
+export const runSimulationResponseSeedMin = 0;
+export const runSimulationResponseSeedMax = 4294967295;
+
 export const runSimulationResponseActualLatencyMsMin = 0;
 
 
@@ -518,6 +533,7 @@ export const RunSimulationResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(runSimulationResponseSeedMin).max(runSimulationResponseSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -542,6 +558,9 @@ export const GetExecutionParams = zod.object({
   "id": zod.coerce.number().int().min(1)
 })
 
+export const getExecutionResponseSeedMin = 0;
+export const getExecutionResponseSeedMax = 4294967295;
+
 export const getExecutionResponseActualLatencyMsMin = 0;
 
 
@@ -555,6 +574,7 @@ export const GetExecutionResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(getExecutionResponseSeedMin).max(getExecutionResponseSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -601,6 +621,9 @@ export const ReplayExecutionBody = zod.object({
   "seed": zod.number().int().min(replayExecutionBodySeedMin).max(replayExecutionBodySeedMax).optional().describe('Used only in reexecute mode; reproduce always uses the stored seed.')
 })
 
+export const replayExecutionResponseSeedMin = 0;
+export const replayExecutionResponseSeedMax = 4294967295;
+
 export const replayExecutionResponseActualLatencyMsMin = 0;
 
 
@@ -614,6 +637,7 @@ export const ReplayExecutionResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(replayExecutionResponseSeedMin).max(replayExecutionResponseSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -645,7 +669,13 @@ export const CompareExecutionsBody = zod.object({
   "replayExecutionId": zod.number().int().min(1)
 })
 
+export const compareExecutionsResponseOriginalSeedMin = 0;
+export const compareExecutionsResponseOriginalSeedMax = 4294967295;
+
 export const compareExecutionsResponseOriginalActualLatencyMsMin = 0;
+
+export const compareExecutionsResponseReplaySeedMin = 0;
+export const compareExecutionsResponseReplaySeedMax = 4294967295;
 
 export const compareExecutionsResponseReplayActualLatencyMsMin = 0;
 
@@ -661,6 +691,7 @@ export const CompareExecutionsResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(compareExecutionsResponseOriginalSeedMin).max(compareExecutionsResponseOriginalSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -682,6 +713,7 @@ export const CompareExecutionsResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(compareExecutionsResponseReplaySeedMin).max(compareExecutionsResponseReplaySeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),
@@ -736,6 +768,9 @@ export const CreateRecoveryWorkflowBody = zod.object({
 })).optional()
 })
 
+export const createRecoveryWorkflowResponseExecutionsItemSeedMin = 0;
+export const createRecoveryWorkflowResponseExecutionsItemSeedMax = 4294967295;
+
 export const createRecoveryWorkflowResponseExecutionsItemActualLatencyMsMin = 0;
 
 
@@ -750,6 +785,7 @@ export const CreateRecoveryWorkflowResponse = zod.object({
   "requestQuery": zod.record(zod.string(), zod.string()),
   "requestBody": zod.string().nullish(),
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
+  "seed": zod.number().int().min(createRecoveryWorkflowResponseExecutionsItemSeedMin).max(createRecoveryWorkflowResponseExecutionsItemSeedMax).nullable().describe('Null for executions created before deterministic replay was introduced.'),
   "simulatedStatus": zod.number().int().nullish(),
   "responseHeaders": zod.record(zod.string(), zod.string()),
   "responseBody": zod.string().nullish(),

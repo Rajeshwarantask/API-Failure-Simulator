@@ -461,6 +461,7 @@ components:
         - requestHeaders
         - requestQuery
         - failureType
+        - seed
         - responseHeaders
         - actualLatencyMs
         - status
@@ -479,6 +480,7 @@ components:
         requestBody: { type: ["string", "null"] }
         failureType:
           $ref: "#/components/schemas/FailureType"
+        seed: { type: ["integer", "null"], minimum: 0, maximum: 4294967295, description: Null for executions created before deterministic replay was introduced. }
         simulatedStatus: { type: ["integer", "null"] }
         responseHeaders:
           $ref: "#/components/schemas/KeyValueMap"
