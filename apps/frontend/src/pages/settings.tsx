@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Clock3, LogOut, Users, UserRound } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { customFetch } from '@workspace/api-client-react';
 
 function dateLabel(value: string) { return new Intl.DateTimeFormat('en', { dateStyle: 'medium' }).format(new Date(value)); }
 const inputClass = 'mt-2 h-11 w-full rounded-lg border border-input bg-background px-3.5 text-sm outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/15';
@@ -13,11 +14,47 @@ export default function SettingsPage() {
   const [teamCode, setTeamCode] = useState('');
   const [joinCode, setJoinCode] = useState('');
   const [message, setMessage] = useState('');
-  const load = async () => { const response = await fetch('/api/workspace'); if (response.ok) { const data = await response.json(); setWorkspace(data); setWeeks(data.retentionWeeks); setTeamId(data.teams?.[0]?.id ?? null); } };
+  const load = async () => {
+    try {
+      const data = await customFetch<any>('/api/workspace');
+      setWorkspace(data);
+      setWeeks(data.retentionWeeks);
+      setTeamId(data.teams?.[0]?.id ?? null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not load workspace settings.');
+    }
+  };
   useEffect(() => { void load(); }, []);
-  const saveRetention = async () => { const response = await fetch('/api/workspace/retention', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ weeks, teamId }) }); setMessage(response.ok ? 'Retention policy saved.' : (await response.json()).error); await load(); };
-  const createTeam = async () => { const response = await fetch('/api/teams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: teamName, code: teamCode }) }); setMessage(response.ok ? 'Team created.' : (await response.json()).error); setTeamName(''); setTeamCode(''); await load(); };
-  const joinTeam = async () => { const response = await fetch('/api/teams/join', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: joinCode }) }); setMessage(response.ok ? 'Joined team.' : (await response.json()).error); setJoinCode(''); await load(); };
+  const saveRetention = async () => {
+    try {
+      await customFetch('/api/workspace/retention', { method: 'PATCH', body: JSON.stringify({ weeks, teamId }) });
+      setMessage('Retention policy saved.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not save retention policy.');
+    }
+    await load();
+  };
+  const createTeam = async () => {
+    try {
+      await customFetch('/api/teams', { method: 'POST', body: JSON.stringify({ name: teamName, code: teamCode }) });
+      setMessage('Team created.');
+      setTeamName('');
+      setTeamCode('');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not create team.');
+    }
+    await load();
+  };
+  const joinTeam = async () => {
+    try {
+      await customFetch('/api/teams/join', { method: 'POST', body: JSON.stringify({ code: joinCode }) });
+      setMessage('Joined team.');
+      setJoinCode('');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Could not join team.');
+    }
+    await load();
+  };
   const currentTeam = workspace?.teams?.find((team: any) => team.id === teamId);
   return <div className="mx-auto max-w-4xl space-y-8 pb-8">
     <header className="border-b border-border/80 pb-7"><p className="eyebrow text-primary">Workspace</p><h1 className="page-title mt-2 text-[32px] font-bold tracking-[-.045em]">Settings</h1><p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">Manage your profile, workspace access, and data lifecycle.</p></header>
