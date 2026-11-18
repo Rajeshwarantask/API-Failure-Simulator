@@ -6,7 +6,7 @@ import { legacySeededRandom } from "./legacySeededRandom.test-helper.js";
 import { deriveSeed, mulberry32 } from "./prng.js";
 import { reproduceExecution } from "./replay.js";
 import { proxyHeaders } from "../lib/proxy-headers.js";
-import { MAX_UPSTREAM_BODY_BYTES } from "../lib/target-url.js";
+import { createSafeFetch, MAX_UPSTREAM_BODY_BYTES } from "../lib/target-url.js";
 
 // At p=50%, 1,000 trials have a 1.58pp standard error; a 5pp bound is about 3.2 standard errors.
 const INJECTION_RATE_TOLERANCE = 0.05;
@@ -93,6 +93,27 @@ function fakeDatabase() {
 }
 
 describe("deterministic execution engine", () => {
+  it("does not resolve target hosts when forwarding is disabled", async () => {
+    let resolutions = 0;
+    const fetch = createSafeFetch({
+      resolver: async () => {
+        resolutions += 1;
+        return [{ address: "8.8.8.8", family: 4 }];
+      },
+      fetch: async () => new Response("upstream"),
+      allowPrivate: false,
+    });
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch,
+      createSeed: () => 7,
+    });
+
+    await execute({ ...fixtureSimulation(1), failureType: "none", forwardRequest: false });
+
+    expect(resolutions).toBe(0);
+  });
+
   it("documents the old simulation-id seed bug", () => {
     expect(injectionCount(1, 30, false)).toBe(1000);
     expect(injectionCount(1, 20, false)).toBe(0);

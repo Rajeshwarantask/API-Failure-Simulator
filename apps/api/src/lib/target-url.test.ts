@@ -46,7 +46,7 @@ describe("target URL policy", () => {
     "blocks private or non-routable target %s",
     async (target) => {
       await expect(
-        validateTargetUrl(target, publicResolver, false),
+        validateTargetUrl(target, false),
       ).rejects.toThrow("target_url_private_address_not_allowed");
     },
   );
@@ -55,20 +55,22 @@ describe("target URL policy", () => {
     const fakeResolver = async () => [
       { address: "169.254.169.254", family: 4 },
     ];
+    await expect(validateTargetUrl("https://metadata.test/", false)).resolves.toBeInstanceOf(URL);
     await expect(
-      validateTargetUrl("https://metadata.test/", fakeResolver, false),
+      createSafeFetch({ resolver: fakeResolver, allowPrivate: false })("https://metadata.test/"),
     ).rejects.toThrow("target_url_private_address_not_allowed");
   });
 
-  it("allows HTTP and HTTPS public hosts but rejects other schemes", async () => {
+  it("allows unresolved seeded hostnames without DNS and rejects bad schemes", async () => {
+    await expect(validateTargetUrl("https://profiles.internal.example/v1/me", false)).resolves.toBeInstanceOf(URL);
     await expect(
-      validateTargetUrl("https://public.test/resource", publicResolver, false),
+      validateTargetUrl("https://public.test/resource", false),
     ).resolves.toBeInstanceOf(URL);
     await expect(
-      validateTargetUrl("http://public.test/resource", publicResolver, false),
+      validateTargetUrl("http://public.test/resource", false),
     ).resolves.toBeInstanceOf(URL);
     await expect(
-      validateTargetUrl("ftp://public.test/resource", publicResolver, false),
+      validateTargetUrl("ftp://public.test/resource", false),
     ).rejects.toThrow("target_url_protocol_not_allowed");
   });
 

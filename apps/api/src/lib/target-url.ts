@@ -144,7 +144,6 @@ function parseTargetUrl(input: string): URL {
 
 export async function validateTargetUrl(
   input: string,
-  resolver: AddressResolver = resolveAllAddresses,
   allowPrivate = privateTargetsAllowed(),
 ): Promise<URL> {
   const url = parseTargetUrl(input);
@@ -157,13 +156,22 @@ export async function validateTargetUrl(
   ) {
     throw targetError("private_address_not_allowed");
   }
-  if (isIP(hostname)) {
-    if (isBlockedAddress(hostname))
-      throw targetError("private_address_not_allowed");
-    return url;
+  if (isIP(hostname) && isBlockedAddress(hostname)) {
+    throw targetError("private_address_not_allowed");
   }
-
   if (!/^[a-z0-9.-]+$/i.test(hostname)) throw targetError("invalid_hostname");
+  return url;
+}
+
+async function validateResolvedTargetUrl(
+  input: string,
+  resolver: AddressResolver,
+  allowPrivate: boolean,
+): Promise<URL> {
+  const url = await validateTargetUrl(input, allowPrivate);
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (allowPrivate || isIP(hostname)) return url;
+
   let addresses: LookupAddress[];
   try {
     addresses = await resolver(hostname);
@@ -245,7 +253,7 @@ export function createSafeFetch(
     );
 
     for (let redirects = 0; ; redirects += 1) {
-      await validateTargetUrl(url.toString(), resolver, allowPrivate);
+      await validateResolvedTargetUrl(url.toString(), resolver, allowPrivate);
       const response = await fetcher(url, {
         ...init,
         method,
@@ -262,7 +270,7 @@ export function createSafeFetch(
       }
 
       const nextUrl = new URL(location, url);
-      await validateTargetUrl(nextUrl.toString(), resolver, allowPrivate);
+      await validateResolvedTargetUrl(nextUrl.toString(), resolver, allowPrivate);
       await response.body?.cancel();
       if (nextUrl.origin !== url.origin) {
         headers.delete("authorization");
