@@ -1,6 +1,7 @@
 const allowedIncomingHeaders = [
   "accept",
   "content-type",
+  "cookie",
   "user-agent",
   "x-request-id",
 ] as const;
@@ -17,9 +18,9 @@ export function proxyHeaders(
       allowedIncomingHeaders.includes(
         key.toLowerCase() as (typeof allowedIncomingHeaders)[number],
       ) &&
-      typeof value === "string"
+      (typeof value === "string" || (key.toLowerCase() === "cookie" && Array.isArray(value)))
     ) {
-      received.set(key, value);
+      received.set(key, Array.isArray(value) ? value.join("; ") : value);
     }
   }
 

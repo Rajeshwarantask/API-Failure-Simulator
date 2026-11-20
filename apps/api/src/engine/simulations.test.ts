@@ -202,7 +202,8 @@ describe("deterministic execution engine", () => {
     );
 
     expect(outgoingHeaders.authorization).toBe("Bearer config-secret");
-    expect(outgoingHeaders.cookie).toBe("session=config-secret");
+    expect(outgoingHeaders.cookie).toBe("session=caller-secret");
+    expect(outgoingHeaders["x-faultline-key"]).toBe("internal-secret");
     expect(outgoingHeaders["x-faultline-token"]).toBeUndefined();
     expect(execution.requestHeaders).toMatchObject({
       authorization: "[REDACTED]",
@@ -228,6 +229,52 @@ describe("deterministic execution engine", () => {
       proxyResponseHeaders?: Record<string, string | string[]>;
     }).proxyResponseHeaders;
     expect(rawProxyResponseHeaders?.["set-cookie"]).toEqual(["session=response-secret"]);
+  });
+
+  it("forwards cookies on GET and POST and passes upstream status and response through", async () => {
+    const calls: Array<{ method?: string; cookie: string | null; body?: string }> = [];
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (_input, init) => {
+        const headers = new Headers(init?.headers);
+        calls.push({
+          method: init?.method,
+          cookie: headers.get("cookie"),
+          body: typeof init?.body === "string" ? init.body : undefined,
+        });
+        return new Response(`upstream-${init?.method}`, { status: 201 });
+      },
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const simulation: Simulation = { ...fixtureSimulation(104), failureType: "none" };
+    const incomingHeaders = proxyHeaders(null, {
+      cookie: ["accessToken=abc", "refreshToken=xyz"],
+      authorization: "Bearer configured-by-caller",
+      "x-custom-header": "retained-by-config-only",
+    });
+
+    const getExecution = await execute(simulation, {}, {
+      method: "GET",
+      source: "external",
+      headers: incomingHeaders,
+    });
+    const postExecution = await execute(simulation, {}, {
+      method: "POST",
+      source: "external",
+      headers: incomingHeaders,
+      requestBody: '{"task":"new"}',
+    });
+
+    expect(calls).toEqual([
+      { method: "GET", cookie: "accessToken=abc; refreshToken=xyz", body: undefined },
+      { method: "POST", cookie: "accessToken=abc; refreshToken=xyz", body: '{"task":"new"}' },
+    ]);
+    expect(getExecution.simulatedStatus).toBe(201);
+    expect(getExecution.responseBody).toBe("upstream-GET");
+    expect(postExecution.simulatedStatus).toBe(201);
+    expect(postExecution.responseBody).toBe("upstream-POST");
+    expect(getExecution.requestHeaders.cookie).toBe("[REDACTED]");
   });
 
   it("caps upstream response bytes and persists a truncation marker", async () => {
