@@ -287,14 +287,14 @@ describe("deterministic execution engine", () => {
           method: String(init?.method),
           cookie: new Headers(init?.headers).get("cookie"),
         });
-        return new Response('{"ok":true}', { status: 200 });
+        return new Response('[{"id":1,"task":"Complete React frontend"},{"id":2,"task":"Connect Express backend"},{"id":3,"task":"Test Vercel proxy"}]', { status: 200 });
       },
       sleep: async () => {},
       createSeed: () => 123,
     });
     const simulation = {
       ...fixtureSimulation(108),
-      targetUrl: "https://upstream.example.test/",
+      targetUrl: "https://backend.example.com/",
       method: "GET",
       headers: { cookie: "session=saved-secret" },
       queryParams: { page: "3" },
@@ -304,8 +304,8 @@ describe("deterministic execution engine", () => {
     } satisfies Simulation;
     const context = {
       method: "GET" as const,
-      pathSuffix: "/api/task/send/alltask",
-      targetUrl: "https://upstream.example.test/",
+      pathSuffix: "api/task/send/alltask/",
+      targetUrl: "https://backend.example.com/",
       headers: { cookie: "session=incoming-secret" },
       queryParams: { page: "3", filter: "ready" },
       source: "external" as const,
@@ -313,9 +313,9 @@ describe("deterministic execution engine", () => {
       requestIp: "192.0.2.15",
     };
     const first = await execute(simulation, {
-      failureType: "http_404",
-      statusCode: 404,
-      workflow: [{ failureType: "http_404", attempts: 1 }],
+      failureType: "http_400",
+      statusCode: 400,
+      workflow: [{ failureType: "http_400", attempts: 1 }],
       seed: 1,
     }, context);
     const second = await execute(simulation, {
@@ -324,17 +324,19 @@ describe("deterministic execution engine", () => {
       seed: 2,
     }, context);
 
-    expect(first.simulatedStatus).toBe(404);
-    expect(first.failureType).toBe("http_404");
+    expect(first.simulatedStatus).toBe(400);
+    expect(first.failureType).toBe("http_400");
+    expect(first.responseHeaders["x-simulator-rule"]).toBe("http_400");
     expect(first.status).toBe("failure");
     expect(second.simulatedStatus).toBe(200);
+    expect(second.responseHeaders["x-simulator-rule"]).toBe("none");
     expect(second.status).toBe("success");
     expect(calls).toEqual([{
-      url: "https://upstream.example.test/api/task/send/alltask?page=3&filter=ready",
+      url: "https://backend.example.com/api/task/send/alltask?page=3&filter=ready",
       method: "GET",
       cookie: "session=incoming-secret",
     }]);
-    expect(first.url).toBe("https://upstream.example.test/api/task/send/alltask?page=3&filter=ready");
+    expect(first.url).toBe("https://backend.example.com/api/task/send/alltask?page=3&filter=ready");
     expect(second.url).toBe(first.url);
     expect(first.method).toBe("GET");
     expect(second.method).toBe(first.method);
@@ -345,14 +347,43 @@ describe("deterministic execution engine", () => {
       "Request conditions matched",
       "Failure injected",
       "Upstream not called",
-      "Recovery outcome: http 404",
+      "Recovery outcome: http 400",
     ]));
+    expect(second.responseBody).toContain('"Complete React frontend"');
     expect(second.timeline.map(({ label }) => label)).toEqual(expect.arrayContaining([
       "Request conditions matched",
       "No failure injected",
       "Upstream responded with HTTP 200",
       "Recovery outcome: pass-through",
     ]));
+  });
+
+  it("does not append an API path twice when the target already ends with it", async () => {
+    const requestedUrls: string[] = [];
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (input) => {
+        requestedUrls.push(String(input));
+        return new Response("[]", { status: 200 });
+      },
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const simulation = { ...fixtureSimulation(109), forwardRequest: true } satisfies Simulation;
+
+    const execution = await execute(simulation, {
+      failureType: "none",
+      workflow: [{ failureType: "none", attempts: 1 }],
+    }, {
+      method: "GET",
+      targetUrl: "https://backend.example.com/api/task/send/alltask/",
+      pathSuffix: "/api/task/send/alltask/",
+      source: "external",
+      headers: { cookie: "accessToken=valid-test-cookie" },
+    });
+
+    expect(requestedUrls).toEqual(["https://backend.example.com/api/task/send/alltask/"]);
+    expect(execution.url).toBe("https://backend.example.com/api/task/send/alltask/");
   });
 
   it("does not abort a slow upstream request when forwarding timeout is zero", async () => {

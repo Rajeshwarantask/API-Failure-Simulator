@@ -101,7 +101,7 @@ beforeEach(() => {
     encryptedContext: encryptRequestContext(642, {
       method: "GET",
       targetUrl: "https://tasks.example.test/",
-      pathSuffix: "/api/task/send/alltask",
+      pathSuffix: "",
       queryParams: { path: "proxy/simulations/20/api/task/send/alltask" },
       headers: { cookie: "session=do-not-leak", accept: "application/json" },
       requestBody: null,
@@ -119,51 +119,71 @@ beforeEach(() => {
     requestQuery: request.queryParams,
     requestBody: request.requestBody,
     failureType: overrides.failureType,
-    simulatedStatus: overrides.failureType === "http_404" ? 404 : 200,
-    status: overrides.failureType === "http_404" ? "failure" : "success",
+    simulatedStatus: overrides.failureType === "http_400" ? 400 : 200,
+    status: overrides.failureType === "http_400" ? "failure" : "success",
     responseBody: "{}",
     responseHeaders: {},
     actualLatencyMs: 1,
     source: request.source,
     createdAt: new Date().toISOString(),
-    timeline: [],
+    timeline: [{ label: overrides.failureType === "none" ? "Upstream responded with HTTP 200" : "Upstream not called" }],
   }));
 });
 
-async function runRecovery(workflow: Array<{ failureType: string; attempts: number }>) {
+async function runRecovery(
+  workflow: Array<{ failureType: string; attempts: number }>,
+  request?: { pathSuffix?: string },
+) {
   return fetch(`${baseUrl}/simulations/20/recovery`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sourceExecutionId: 642, workflow }),
+    body: JSON.stringify({ sourceExecutionId: 642, workflow, request }),
   });
 }
 
 describe("captured request recovery", () => {
   it("reuses the same authenticated request context for every attempt and redacts it from the response", async () => {
     const response = await runRecovery([
-      { failureType: "http_404", attempts: 1 },
+      { failureType: "http_400", attempts: 1 },
       { failureType: "none", attempts: 1 },
     ]);
-    const result = await response.json();
+    const result: any = await response.json();
 
     expect(response.status).toBe(201);
     expect(result.recovered).toBe(true);
-    expect(result.executions.map((execution: any) => execution.simulatedStatus)).toEqual([404, 200]);
+    expect(result.executions.map((execution: any) => execution.simulatedStatus)).toEqual([400, 200]);
     expect(mocks.executeSimulation).toHaveBeenCalledTimes(2);
+    expect(mocks.executeSimulation.mock.calls[0][1].failureType).toBe("http_400");
+    expect(mocks.executeSimulation.mock.calls[1][1].failureType).toBe("none");
     const firstRequest = mocks.executeSimulation.mock.calls[0][2];
     const secondRequest = mocks.executeSimulation.mock.calls[1][2];
     expect(firstRequest).toEqual(secondRequest);
     expect(firstRequest.headers.cookie).toBe("session=do-not-leak");
     expect(firstRequest.method).toBe("GET");
-    expect(firstRequest.queryParams.path).toBe("proxy/simulations/20/api/task/send/alltask");
+    expect(firstRequest.pathSuffix).toBe("/api/task/send/alltask");
+    expect(firstRequest.queryParams).toEqual({});
     expect(JSON.stringify(result)).not.toContain("session=do-not-leak");
     expect(mocks.contextRow).toBeNull();
+  });
+
+  it("lets the recovery API path override the captured path while keeping captured authentication", async () => {
+    const response = await runRecovery(
+      [{ failureType: "none", attempts: 1 }],
+      { pathSuffix: "/api/task/custom" },
+    );
+    const result: any = await response.json();
+    const request = mocks.executeSimulation.mock.calls[0][2];
+
+    expect(response.status).toBe(201);
+    expect(result.recovered).toBe(true);
+    expect(request.pathSuffix).toBe("/api/task/custom");
+    expect(request.headers.cookie).toBe("session=do-not-leak");
   });
 
   it("reports an expired captured context without attempting recovery", async () => {
     mocks.contextRow = null;
     const response = await runRecovery([{ failureType: "none", attempts: 1 }]);
-    const result = await response.json();
+    const result: any = await response.json();
 
     expect(response.status).toBe(410);
     expect(result.error).toContain("expired or was already used");
@@ -181,11 +201,25 @@ describe("captured request recovery", () => {
       source: "external",
     });
     const response = await runRecovery([{ failureType: "none", attempts: 1 }]);
-    const result = await response.json();
+    const result: any = await response.json();
 
     expect(response.status).toBe(422);
     expect(result.error).toContain("no cookie or authorization header");
     expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
+  it("does not call a synthetic 200 without an upstream response recovered", async () => {
+    mocks.executeSimulation.mockImplementation(async () => ({
+      id: 703,
+      status: "success",
+      simulatedStatus: 200,
+      timeline: [{ label: "Upstream not called" }],
+    }));
+    const response = await runRecovery([{ failureType: "none", attempts: 1 }]);
+    const result: any = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(result.recovered).toBe(false);
   });
 
   it("clearly reports an upstream 401 as an authentication failure", async () => {
@@ -194,9 +228,10 @@ describe("captured request recovery", () => {
       status: "failure",
       simulatedStatus: 401,
       responseBody: '{"message":"Please Login"}',
+      timeline: [{ label: "Upstream responded with HTTP 401" }],
     }));
     const response = await runRecovery([{ failureType: "none", attempts: 1 }]);
-    const result = await response.json();
+    const result: any = await response.json();
 
     expect(response.status).toBe(201);
     expect(result.recovered).toBe(false);

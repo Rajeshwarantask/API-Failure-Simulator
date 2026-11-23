@@ -12,7 +12,7 @@ import { proxyHeaders } from "../lib/proxy-headers.js";
 import { sendUpstreamTimeout } from "../lib/proxy-response.js";
 import { validateTargetUrl } from "../lib/target-url.js";
 import { deriveSeed, generateSeed } from "../engine/prng.js";
-import { decryptRequestContext, encryptRequestContext, requestContextExpiry } from "../lib/recovery-context.js";
+import { capturedProxyPath, capturedUpstreamQuery, decryptRequestContext, encryptRequestContext, requestContextExpiry } from "../lib/recovery-context.js";
 import { toFailureType, toHttpMethod, toProxyHttpMethod, type RequestOverrides, type RunOverrides } from "../engine/types.js";
 
 import {
@@ -442,7 +442,21 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
       res.status(422).json({ error: "The captured request has no cookie or authorization header. Capture an authenticated request before starting recovery." });
       return;
     }
-    requestOverrides = captured;
+    const capturedQuery = captured.queryParams ?? {};
+    captured = {
+      ...captured,
+      pathSuffix: capturedProxyPath(captured.pathSuffix, capturedQuery.path, simulation.id),
+      queryParams: capturedUpstreamQuery(capturedQuery, simulation.id),
+    };
+    const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
+    requestOverrides = {
+      ...captured,
+      method: typeof request.method === "string" ? toHttpMethod(request.method) : captured.method,
+      pathSuffix: typeof request.pathSuffix === "string" && request.pathSuffix.trim() ? request.pathSuffix : captured.pathSuffix,
+      headers: isStringRecord(request.headers) ? { ...captured.headers, ...request.headers } : captured.headers,
+      queryParams: isStringRecord(request.queryParams) ? { ...captured.queryParams, ...request.queryParams } : captured.queryParams,
+      requestBody: typeof request.requestBody === "string" || request.requestBody === null ? request.requestBody : captured.requestBody,
+    };
   } else {
     const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
     requestOverrides = {
@@ -467,10 +481,13 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
     }
   }
   const finalExecution = executions.at(-1);
-  const authenticationFailure = finalExecution?.simulatedStatus === 401;
+  const finalTimeline = Array.isArray(finalExecution?.timeline) ? finalExecution.timeline : [];
+  const finalUpstreamResponse = finalTimeline.find((event: { label?: string }) => event.label?.startsWith("Upstream responded with HTTP "));
+  const authenticationFailure = finalUpstreamResponse?.label === "Upstream responded with HTTP 401";
+  const upstreamSucceeded = finalExecution?.status === "success" && /^Upstream responded with HTTP 2\d\d$/.test(finalUpstreamResponse?.label ?? "");
   res.status(201).json({
     executions,
-    recovered: finalExecution?.status === "success",
+    recovered: upstreamSucceeded,
     ...(authenticationFailure ? { authenticationFailure: true, message: "The upstream rejected the captured credentials (HTTP 401). Refresh the source app session and capture a new request." } : {}),
   });
 });
@@ -579,12 +596,13 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
   for (const [key, value] of Object.entries(req.query)) {
     if (typeof value === "string") queryParams[key] = value;
   }
-  const suffix = typeof req.params[1] === "string" ? req.params[1] : "";
+  const suffix = capturedProxyPath(typeof req.params[1] === "string" ? req.params[1] : undefined, queryParams.path, simulation.id) ?? "";
+  const upstreamQueryParams = capturedUpstreamQuery(queryParams, simulation.id);
   const body = req.body && typeof req.body === "object" ? JSON.stringify(req.body) : typeof req.body === "string" ? req.body : null;
   const capturedRequest = {
     method: toProxyHttpMethod(req.method),
     headers,
-    queryParams,
+    queryParams: upstreamQueryParams,
     requestBody: body,
     pathSuffix: suffix,
     source: dashboardSession ? "dashboard" as const : "external" as const,
