@@ -9,6 +9,7 @@ import { createSimulationExecutor } from "../engine/execute.js";
 import { createDrizzleEngineDatabase } from "../engine/drizzleDatabase.js";
 import { reproduceExecution } from "../engine/replay.js";
 import { proxyHeaders } from "../lib/proxy-headers.js";
+import { sendUpstreamTimeout } from "../lib/proxy-response.js";
 import { validateTargetUrl } from "../lib/target-url.js";
 import { deriveSeed, generateSeed } from "../engine/prng.js";
 import { toFailureType, toHttpMethod, toProxyHttpMethod, type RunOverrides } from "../engine/types.js";
@@ -535,6 +536,10 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
     tokenAuthenticated: !dashboardSession,
     requestIp: clientIp(req),
   }, { preserveRawResponseHeaders: true });
+  if (execution.status === "timeout" && execution.failureType === "none") {
+    sendUpstreamTimeout(res);
+    return;
+  }
   if (execution.status === "timeout" || execution.failureType === "connection_failure") {
     res.destroy();
     return;

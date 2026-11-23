@@ -277,6 +277,54 @@ describe("deterministic execution engine", () => {
     expect(getExecution.requestHeaders.cookie).toBe("[REDACTED]");
   });
 
+  it("does not abort a slow upstream request when forwarding timeout is zero", async () => {
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (_input, init) => new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response("slow upstream")), 1100);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      }),
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const execution = await execute({
+      ...fixtureSimulation(105),
+      failureType: "none",
+      forwardTimeoutMs: 0,
+    }, {}, { source: "external" });
+
+    expect(execution.status).toBe("success");
+    expect(execution.simulatedStatus).toBe(200);
+    expect(execution.responseBody).toBe("slow upstream");
+  });
+
+  it("still aborts upstream requests when a positive forwarding timeout is configured", async () => {
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (_input, init) => new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response("too late")), 100);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      }),
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const execution = await execute({
+      ...fixtureSimulation(106),
+      failureType: "none",
+      forwardTimeoutMs: 10,
+    }, {}, { source: "external" });
+
+    expect(execution.status).toBe("timeout");
+    expect(execution.failureType).toBe("none");
+    expect(execution.simulatedStatus).toBeNull();
+  });
+
   it("caps upstream response bytes and persists a truncation marker", async () => {
     const body = new Uint8Array(MAX_UPSTREAM_BODY_BYTES + 8).fill(97);
     const execute = createSimulationExecutor({

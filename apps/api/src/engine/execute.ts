@@ -152,7 +152,10 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
       const shouldForward = options.allowUpstream !== false && (simulation.forwardRequest || requestOverrides.source === "external");
       if ((failureType === "none" || failureType === "latency") && shouldForward) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), Math.max(0, simulation.forwardTimeoutMs ?? 10000));
+        const forwardTimeoutMs = simulation.forwardTimeoutMs ?? 10000;
+        const timer = forwardTimeoutMs > 0
+          ? setTimeout(() => controller.abort(), forwardTimeoutMs)
+          : undefined;
         try {
           const upstream = await engine.fetch(buildUrl(effectiveTargetUrl, requestQuery), {
             method,
@@ -177,7 +180,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
           finalStatus = null;
           finalBody = null;
         } finally {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
         }
       } else if (failureType === "none" || failureType === "latency") {
         finalStatus = 200;
