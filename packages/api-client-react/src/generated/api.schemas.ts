@@ -359,25 +359,36 @@ export interface WorkflowStep {
   latencyMs?: number;
 }
 
+export type RecoveryWorkflowInputRequestHeaders = {[key: string]: string};
+
+export type RecoveryWorkflowInputRequestQueryParams = {[key: string]: string};
+
+export type RecoveryWorkflowInputRequest = {
+  method?: HttpMethod;
+  pathSuffix?: string;
+  headers?: RecoveryWorkflowInputRequestHeaders;
+  queryParams?: RecoveryWorkflowInputRequestQueryParams;
+  /** @nullable */
+  requestBody?: string | null;
+};
+
 export interface RecoveryWorkflowInput {
+  /** @minimum 1 */
+  sourceExecutionId?: number;
   /**
      * @minimum 0
      * @maximum 4294967295
      */
   seed?: number;
   workflow?: WorkflowStep[];
-  request?: {
-    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    pathSuffix?: string;
-    headers?: Record<string, string>;
-    queryParams?: Record<string, string>;
-    requestBody?: string | null;
-  };
+  request?: RecoveryWorkflowInputRequest;
 }
 
 export interface RecoveryWorkflowResult {
   executions: Execution[];
   recovered: boolean;
+  authenticationFailure?: boolean;
+  message?: string;
 }
 
 export interface DashboardSummary {

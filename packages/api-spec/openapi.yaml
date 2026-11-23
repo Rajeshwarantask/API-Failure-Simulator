@@ -548,10 +548,19 @@ components:
     RecoveryWorkflowInput:
       type: object
       properties:
+        sourceExecutionId: { type: integer, minimum: 1 }
         seed: { type: integer, minimum: 0, maximum: 4294967295 }
         workflow:
           type: array
           items: { $ref: "#/components/schemas/WorkflowStep" }
+        request:
+          type: object
+          properties:
+            method: { $ref: "#/components/schemas/HttpMethod" }
+            pathSuffix: { type: string }
+            headers: { type: object, additionalProperties: { type: string } }
+            queryParams: { type: object, additionalProperties: { type: string } }
+            requestBody: { type: [string, "null"] }
     RecoveryWorkflowResult:
       type: object
       required: [executions, recovered]
@@ -560,6 +569,8 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Execution" }
         recovered: { type: boolean }
+        authenticationFailure: { type: boolean }
+        message: { type: string }
     DashboardSummary:
       type: object
       required: [totalSimulations, activeSimulations, requestsExecuted, failedRequests, successfulRequests, recentRuns]

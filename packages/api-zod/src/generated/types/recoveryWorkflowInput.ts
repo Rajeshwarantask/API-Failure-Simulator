@@ -5,20 +5,17 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RecoveryWorkflowInputRequest } from './recoveryWorkflowInputRequest';
 import type { WorkflowStep } from './workflowStep';
 
 export interface RecoveryWorkflowInput {
+  /** @minimum 1 */
+  sourceExecutionId?: number;
   /**
      * @minimum 0
      * @maximum 4294967295
      */
   seed?: number;
   workflow?: WorkflowStep[];
-  request?: {
-    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
-    pathSuffix?: string;
-    headers?: Record<string, string>;
-    queryParams?: Record<string, string>;
-    requestBody?: string | null;
-  };
+  request?: RecoveryWorkflowInputRequest;
 }

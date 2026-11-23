@@ -36,6 +36,13 @@
       "when": 1794734703504,
       "tag": "0005_execution_determinism",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795410000000,
+      "tag": "0006_recovery_request_contexts",
+      "breakpoints": true
     }
   ]
 }

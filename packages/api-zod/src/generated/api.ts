@@ -746,6 +746,7 @@ export const CreateRecoveryWorkflowParams = zod.object({
   "id": zod.coerce.number().int().min(1)
 })
 
+
 export const createRecoveryWorkflowBodySeedMin = 0;
 export const createRecoveryWorkflowBodySeedMax = 4294967295;
 
@@ -759,6 +760,7 @@ export const createRecoveryWorkflowBodyWorkflowItemLatencyMsMin = 0;
 
 
 export const CreateRecoveryWorkflowBody = zod.object({
+  "sourceExecutionId": zod.number().int().min(1).optional(),
   "seed": zod.number().int().min(createRecoveryWorkflowBodySeedMin).max(createRecoveryWorkflowBodySeedMax).optional(),
   "workflow": zod.array(zod.object({
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),
@@ -767,12 +769,12 @@ export const CreateRecoveryWorkflowBody = zod.object({
   "latencyMs": zod.number().int().min(createRecoveryWorkflowBodyWorkflowItemLatencyMsMin).optional()
 })).optional(),
   "request": zod.object({
-    "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
-    "pathSuffix": zod.string().max(2048).optional(),
-    "headers": zod.record(zod.string(), zod.string()).optional(),
-    "queryParams": zod.record(zod.string(), zod.string()).optional(),
-    "requestBody": zod.string().nullable().optional()
-  }).optional()
+  "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
+  "pathSuffix": zod.string().optional(),
+  "headers": zod.record(zod.string(), zod.string()).optional(),
+  "queryParams": zod.record(zod.string(), zod.string()).optional(),
+  "requestBody": zod.string().nullish()
+}).optional()
 })
 
 export const createRecoveryWorkflowResponseExecutionsItemSeedMin = 0;
@@ -805,7 +807,9 @@ export const CreateRecoveryWorkflowResponse = zod.object({
 })),
   "createdAt": zod.coerce.date()
 })),
-  "recovered": zod.boolean()
+  "recovered": zod.boolean(),
+  "authenticationFailure": zod.boolean().optional(),
+  "message": zod.string().optional()
 })
 
 
