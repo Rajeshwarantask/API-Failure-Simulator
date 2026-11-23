@@ -366,6 +366,13 @@ export interface RecoveryWorkflowInput {
      */
   seed?: number;
   workflow?: WorkflowStep[];
+  request?: {
+    method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+    pathSuffix?: string;
+    headers?: Record<string, string>;
+    queryParams?: Record<string, string>;
+    requestBody?: string | null;
+  };
 }
 
 export interface RecoveryWorkflowResult {
