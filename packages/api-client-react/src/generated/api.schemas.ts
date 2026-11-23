@@ -287,6 +287,7 @@ export interface RunSimulationInput {
      * @maximum 4294967295
      */
   seed?: number;
+  pathSuffix?: string;
 }
 
 /**

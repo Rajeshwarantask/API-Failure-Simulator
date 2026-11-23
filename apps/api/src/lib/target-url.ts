@@ -7,6 +7,38 @@ export const MAX_REDIRECTS = 3;
 export const MAX_UPSTREAM_BODY_BYTES = 1024 * 1024;
 export const MAX_STORED_BODY_BYTES = 1024 * 1024;
 
+const internalQueryKeys = new Set(["__faultline_path", "__faultline_simulation"]);
+
+function isInternalRoutingQuery(key: string, value: string): boolean {
+  return internalQueryKeys.has(key.toLowerCase()) || (
+    key.toLowerCase() === "path" && /^\/?(?:api\/)?proxy\/simulations\/\d+(?:\/|$)/.test(value)
+  );
+}
+
+export function buildUpstreamUrl(
+  baseTargetUrl: string,
+  requestPath: string | undefined,
+  query: Record<string, string> = {},
+): string {
+  const url = new URL(baseTargetUrl);
+  const path = requestPath?.trim();
+  if (path && /^[a-z][a-z\d+.-]*:\/\//i.test(path)) {
+    throw new Error("request_path_must_be_relative");
+  }
+  if (path?.includes("?")) throw new Error("request_path_must_not_include_query");
+  if (!path) throw new Error("request_path_required");
+  url.pathname = `/${path.replace(/^\/+/, "").split("/").filter(Boolean).join("/")}`;
+  const configuredQuery = [...url.searchParams.entries()];
+  url.search = "";
+  for (const [key, value] of configuredQuery) {
+    if (!isInternalRoutingQuery(key, value)) url.searchParams.set(key, value);
+  }
+  for (const [key, value] of Object.entries(query)) {
+    if (!isInternalRoutingQuery(key, value)) url.searchParams.set(key, value);
+  }
+  return url.toString();
+}
+
 export type AddressResolver = (hostname: string) => Promise<LookupAddress[]>;
 
 const resolveAllAddresses: AddressResolver = (hostname) =>

@@ -43,7 +43,9 @@ vi.mock("@workspace/db", () => {
       query.then = (resolve: (value: unknown[]) => unknown, reject: (error: unknown) => unknown) => Promise.resolve(
         selectedTable?.tableName === "executions" && mocks.sourceExecution
           ? [{ execution: mocks.sourceExecution }]
-          : [],
+          : selectedTable?.tableName === "execution_request_contexts" && mocks.contextRow
+            ? [mocks.contextRow]
+            : [],
       ).then(resolve, reject);
       return query;
     },
@@ -113,20 +115,24 @@ beforeEach(() => {
   mocks.executeSimulation.mockReset();
   mocks.executeSimulation.mockImplementation(async (_simulation, overrides, request) => ({
     id: 700 + mocks.executeSimulation.mock.calls.length,
-    method: request.method,
-    url: `${request.targetUrl}${request.pathSuffix}`,
+    simulationId: 20,
+    method: request.method ?? "GET",
+    url: `${request.targetUrl ?? "https://tasks.example.test"}${request.pathSuffix}`,
     requestHeaders: { cookie: "[REDACTED]" },
-    requestQuery: request.queryParams,
+    requestQuery: request.queryParams ?? {},
     requestBody: request.requestBody,
-    failureType: overrides.failureType,
+    failureType: overrides.failureType ?? "none",
+    seed: 1,
     simulatedStatus: overrides.failureType === "http_400" ? 400 : 200,
     status: overrides.failureType === "http_400" ? "failure" : "success",
     responseBody: "{}",
     responseHeaders: {},
     actualLatencyMs: 1,
-    source: request.source,
+    source: request.source ?? "dashboard",
+    tokenAuthenticated: request.tokenAuthenticated ?? false,
+    requestIp: request.requestIp ?? null,
     createdAt: new Date().toISOString(),
-    timeline: [{ label: overrides.failureType === "none" ? "Upstream responded with HTTP 200" : "Upstream not called" }],
+    timeline: [{ label: overrides.failureType === "none" ? "Upstream responded with HTTP 200" : "Upstream not called", timestamp: new Date().toISOString(), tone: "success" }],
   }));
 });
 
@@ -140,6 +146,75 @@ async function runRecovery(
     body: JSON.stringify({ sourceExecutionId: 642, workflow, request }),
   });
 }
+
+describe("dashboard execution paths", () => {
+  it("rejects Run now without an API path instead of calling the backend root", async () => {
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(response.status).toBe(400);
+    const payload: any = await response.json();
+    expect(payload.error).toContain("API request path is required");
+    expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
+  it("passes an explicit relative API path to Dashboard Run now", async () => {
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathSuffix: "/api/task/addtask" }),
+    });
+
+    const payload: any = await response.json();
+    expect(response.status, JSON.stringify(payload)).toBe(201);
+    expect((mocks.executeSimulation.mock.calls[0] as any)[2].pathSuffix).toBe("/api/task/addtask");
+  });
+});
+
+describe("captured execution replay", () => {
+  it("replays the original endpoint and restores unexpired captured authentication", async () => {
+    mocks.sourceExecution = {
+      id: 642,
+      simulationId: 20,
+      source: "external",
+      tokenAuthenticated: true,
+      method: "POST",
+      url: "https://tasks.example.test/api/task/addtask?tag=one",
+      requestHeaders: { cookie: "[REDACTED]" },
+      requestQuery: { tag: "one" },
+      requestBody: '{"task":"saved"}',
+      configSnapshot: { request: { pathSuffix: "/api/task/addtask" } },
+      seed: 7,
+    };
+    mocks.contextRow = {
+      executionId: 642,
+      encryptedContext: encryptRequestContext(642, {
+        method: "POST",
+        targetUrl: "https://old-target.example.test/api/task/send/alltask",
+        pathSuffix: "/api/task/addtask",
+        queryParams: { tag: "one" },
+        headers: { cookie: "session=replay-secret" },
+        requestBody: '{"task":"saved"}',
+      }),
+      expiresAt: new Date(Date.now() + 60_000),
+    };
+
+    const response = await fetch(`${baseUrl}/executions/642/replay`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "reexecute" }),
+    });
+
+    expect(response.status).toBe(201);
+    const request = (mocks.executeSimulation.mock.calls[0] as any)[2];
+    expect(request.pathSuffix).toBe("/api/task/addtask");
+    expect(request.targetUrl).toBe("https://tasks.example.test/");
+    expect(request.headers.cookie).toBe("session=replay-secret");
+  });
+});
 
 describe("captured request recovery", () => {
   it("reuses the same authenticated request context for every attempt and redacts it from the response", async () => {

@@ -382,8 +382,8 @@ describe("deterministic execution engine", () => {
       headers: { cookie: "accessToken=valid-test-cookie" },
     });
 
-    expect(requestedUrls).toEqual(["https://backend.example.com/api/task/send/alltask/"]);
-    expect(execution.url).toBe("https://backend.example.com/api/task/send/alltask/");
+    expect(requestedUrls).toEqual(["https://backend.example.com/api/task/send/alltask"]);
+    expect(execution.url).toBe("https://backend.example.com/api/task/send/alltask");
   });
 
   it("does not abort a slow upstream request when forwarding timeout is zero", async () => {

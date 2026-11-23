@@ -2,7 +2,7 @@ import type { Execution, ExecutionConfigSnapshot, NewExecution, Simulation } fro
 import { deriveResponseBody, decideFailure } from "./decide.js";
 import { matchConditions } from "./matchConditions.js";
 import { generateSeed } from "./prng.js";
-import { capStoredBody, createSafeFetch, readCappedBody, redactExecutionData } from "../lib/target-url.js";
+import { buildUpstreamUrl, capStoredBody, createSafeFetch, readCappedBody, redactExecutionData } from "../lib/target-url.js";
 import { toFailureType, toHttpMethod, type FailureType, type HttpMethod, type RequestOverrides, type RunOverrides } from "./types.js";
 
 export type ExecutionInsert = NewExecution;
@@ -28,10 +28,8 @@ const defaultDependencies = {
   createSeed: generateSeed,
 };
 
-export function buildUrl(targetUrl: string, query: Record<string, string>): string {
-  const url = new URL(targetUrl);
-  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
-  return url.toString();
+export function buildUrl(targetUrl: string, query: Record<string, string>, requestPath = "/"): string {
+  return buildUpstreamUrl(targetUrl, requestPath, query);
 }
 
 function createTimeline(
@@ -107,15 +105,11 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
     const requestHeaders = requestOverrides.headers ?? simulation.headers;
     const requestQuery = requestOverrides.queryParams ?? simulation.queryParams;
     const requestBody = requestOverrides.requestBody === undefined ? simulation.requestBody : requestOverrides.requestBody;
-    const baseUrl = new URL(requestOverrides.targetUrl ?? simulation.targetUrl);
-    if (requestOverrides.pathSuffix) {
-      const suffix = `/${requestOverrides.pathSuffix.replace(/^\/+/, "").replace(/\/+$/, "")}`;
-      const basePath = baseUrl.pathname.replace(/\/+$/, "");
-      if (basePath !== suffix && !basePath.endsWith(suffix)) {
-        baseUrl.pathname = `${basePath}${suffix}`;
-      }
-    }
-    const effectiveTargetUrl = baseUrl.toString();
+    const effectiveTargetUrl = buildUpstreamUrl(
+      requestOverrides.targetUrl ?? simulation.targetUrl,
+      requestOverrides.pathSuffix ?? "/",
+      {},
+    );
     const request = { method, headers: requestHeaders, queryParams: requestQuery, requestBody };
     const conditionsMatch = matchConditions(simulation.conditions, request, effectiveTargetUrl);
     const workflow = overrides.workflow ?? simulation.workflow ?? [];
@@ -169,7 +163,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
           ? setTimeout(() => controller.abort(), forwardTimeoutMs)
           : undefined;
         try {
-          const upstream = await engine.fetch(buildUrl(effectiveTargetUrl, requestQuery), {
+          const upstream = await engine.fetch(buildUrl(effectiveTargetUrl, requestQuery, requestOverrides.pathSuffix ?? "/"), {
             method,
             headers: requestHeaders,
             body: ["GET", "HEAD"].includes(method) ? undefined : requestBody ?? undefined,
@@ -213,7 +207,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
       seed,
       configSnapshot: redactExecutionData(configSnapshot),
       method,
-      url: buildUrl(effectiveTargetUrl, requestQuery),
+      url: buildUrl(effectiveTargetUrl, requestQuery, requestOverrides.pathSuffix ?? "/"),
       requestHeaders: redactExecutionData(requestHeaders),
       requestQuery,
       requestBody: capStoredBody(requestBody),
