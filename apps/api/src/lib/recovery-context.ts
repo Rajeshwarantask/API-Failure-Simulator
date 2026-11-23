@@ -35,3 +35,28 @@ export function decryptRequestContext(executionId: number, value: string): Captu
 export function requestContextExpiry(now = Date.now()): Date {
   return new Date(now + CONTEXT_TTL_MS);
 }
+
+function isProxyRoutingPath(value: string | undefined, simulationId: number): boolean {
+  if (!value) return false;
+  return new RegExp(`^/?(?:api/)?proxy/simulations/${simulationId}(?:/|$)`).test(value);
+}
+
+export function capturedProxyPath(
+  routePath: string | undefined,
+  routingPath: string | undefined,
+  simulationId: number,
+): string | undefined {
+  if (routePath && routePath !== "/") return routePath.startsWith("/") ? routePath : `/${routePath}`;
+  if (!isProxyRoutingPath(routingPath, simulationId)) return undefined;
+  const suffix = routingPath!.replace(new RegExp(`^/?(?:api/)?proxy/simulations/${simulationId}`), "");
+  return suffix ? (suffix.startsWith("/") ? suffix : `/${suffix}`) : undefined;
+}
+
+export function capturedUpstreamQuery(
+  query: Record<string, string>,
+  simulationId: number,
+): Record<string, string> {
+  if (!isProxyRoutingPath(query.path, simulationId)) return { ...query };
+  const { path: _routingPath, ...upstreamQuery } = query;
+  return upstreamQuery;
+}

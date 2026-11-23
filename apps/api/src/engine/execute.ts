@@ -109,8 +109,11 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
     const requestBody = requestOverrides.requestBody === undefined ? simulation.requestBody : requestOverrides.requestBody;
     const baseUrl = new URL(requestOverrides.targetUrl ?? simulation.targetUrl);
     if (requestOverrides.pathSuffix) {
-      const suffix = requestOverrides.pathSuffix.startsWith("/") ? requestOverrides.pathSuffix : `/${requestOverrides.pathSuffix}`;
-      baseUrl.pathname = `${baseUrl.pathname.replace(/\/$/, "")}${suffix}`;
+      const suffix = `/${requestOverrides.pathSuffix.replace(/^\/+/, "").replace(/\/+$/, "")}`;
+      const basePath = baseUrl.pathname.replace(/\/+$/, "");
+      if (basePath !== suffix && !basePath.endsWith(suffix)) {
+        baseUrl.pathname = `${basePath}${suffix}`;
+      }
     }
     const effectiveTargetUrl = baseUrl.toString();
     const request = { method, headers: requestHeaders, queryParams: requestQuery, requestBody };
