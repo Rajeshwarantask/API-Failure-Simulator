@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { Router, type Request, type Response } from "express";
-import { and, desc, eq, isNull, lt } from "drizzle-orm";
-import { db, executionsTable, integrationCredentialsTable, simulationsTable } from "@workspace/db";
+import { and, desc, eq, gt, isNull, lt } from "drizzle-orm";
+import { db, executionRequestContextsTable, executionsTable, integrationCredentialsTable, simulationsTable } from "@workspace/db";
 import { canAccessTeam, ensureUser, getAccessibleSimulation, requireUserId, simulationAccess } from "../lib/workspace.js";
 import type { AuthenticatedRequest } from "../middleware/auth.js";
 import { createSimulationExecutor } from "../engine/execute.js";
@@ -12,7 +12,8 @@ import { proxyHeaders } from "../lib/proxy-headers.js";
 import { sendUpstreamTimeout } from "../lib/proxy-response.js";
 import { validateTargetUrl } from "../lib/target-url.js";
 import { deriveSeed, generateSeed } from "../engine/prng.js";
-import { toFailureType, toHttpMethod, toProxyHttpMethod, type RunOverrides } from "../engine/types.js";
+import { decryptRequestContext, encryptRequestContext, requestContextExpiry } from "../lib/recovery-context.js";
+import { toFailureType, toHttpMethod, toProxyHttpMethod, type RequestOverrides, type RunOverrides } from "../engine/types.js";
 
 import {
   CreateSimulationBody,
@@ -405,12 +406,53 @@ router.post("/executions/:id/compare", async (req: AuthenticatedRequest, res): P
 });
 
 router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res): Promise<void> => {
-  const simulation = await getSimulation(requireUserId(req), Number(req.params.id));
+  const userId = requireUserId(req);
+  const simulation = await getSimulation(userId, Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
   const workflow = Array.isArray(req.body?.workflow) ? req.body.workflow : simulation.workflow;
   const requestedSeed = Number(req.body?.seed);
   const baseSeed = Number.isInteger(requestedSeed) && requestedSeed >= 0 && requestedSeed <= 0xffffffff ? requestedSeed : generateSeed();
-  const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
+  let requestOverrides: RequestOverrides;
+  const rawSourceExecutionId = req.body?.sourceExecutionId;
+  const sourceExecutionId = Number(rawSourceExecutionId);
+  if (rawSourceExecutionId !== undefined && (!Number.isInteger(sourceExecutionId) || sourceExecutionId <= 0)) {
+    res.status(400).json({ error: "sourceExecutionId must be a positive integer" });
+    return;
+  }
+  if (rawSourceExecutionId !== undefined) {
+    const source = await getExecution(userId, sourceExecutionId);
+    if (!source || source.simulationId !== simulation.id) { res.status(404).json({ error: "Captured execution not found for this simulation" }); return; }
+    if (source.source !== "external") { res.status(422).json({ error: "Choose a captured external request as the replay source" }); return; }
+    const [storedContext] = await db.delete(executionRequestContextsTable).where(and(
+      eq(executionRequestContextsTable.executionId, source.id),
+      gt(executionRequestContextsTable.expiresAt, now()),
+    )).returning();
+    if (!storedContext) {
+      res.status(410).json({ error: "Captured request context expired or was already used. Send the request through the proxy again, then start recovery within 15 minutes." });
+      return;
+    }
+    let captured: RequestOverrides & { targetUrl: string };
+    try {
+      captured = decryptRequestContext(source.id, storedContext.encryptedContext);
+    } catch {
+      res.status(410).json({ error: "The captured request context is unavailable. Send the request through the proxy again." });
+      return;
+    }
+    if (!captured.headers?.cookie && !captured.headers?.authorization) {
+      res.status(422).json({ error: "The captured request has no cookie or authorization header. Capture an authenticated request before starting recovery." });
+      return;
+    }
+    requestOverrides = captured;
+  } else {
+    const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
+    requestOverrides = {
+      method: typeof request.method === "string" ? toHttpMethod(request.method) : undefined,
+      pathSuffix: typeof request.pathSuffix === "string" ? request.pathSuffix : undefined,
+      headers: isStringRecord(request.headers) ? request.headers : undefined,
+      queryParams: isStringRecord(request.queryParams) ? request.queryParams : undefined,
+      requestBody: typeof request.requestBody === "string" || request.requestBody === null ? request.requestBody : undefined,
+    };
+  }
   let attemptIndex = 0;
   const executions = [];
   for (const step of workflow ?? []) {
@@ -421,16 +463,16 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
         failureType: toFailureType(step.failureType),
         workflow: [{ ...step, failureType: toFailureType(step.failureType), attempts: 1 }],
         seed: deriveSeed(baseSeed, attemptIndex++),
-      }, {
-        method: typeof request.method === "string" ? toHttpMethod(request.method) : undefined,
-        pathSuffix: typeof request.pathSuffix === "string" ? request.pathSuffix : undefined,
-        headers: isStringRecord(request.headers) ? request.headers : undefined,
-        queryParams: isStringRecord(request.queryParams) ? request.queryParams : undefined,
-        requestBody: typeof request.requestBody === "string" || request.requestBody === null ? request.requestBody : undefined,
-      }));
+      }, requestOverrides));
     }
   }
-  res.status(201).json({ executions, recovered: executions.at(-1)?.status === "success" });
+  const finalExecution = executions.at(-1);
+  const authenticationFailure = finalExecution?.simulatedStatus === 401;
+  res.status(201).json({
+    executions,
+    recovered: finalExecution?.status === "success",
+    ...(authenticationFailure ? { authenticationFailure: true, message: "The upstream rejected the captured credentials (HTTP 401). Refresh the source app session and capture a new request." } : {}),
+  });
 });
 
 router.post("/executions/:id/replay", async (req: AuthenticatedRequest, res): Promise<void> => {
@@ -539,16 +581,31 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
   }
   const suffix = typeof req.params[1] === "string" ? req.params[1] : "";
   const body = req.body && typeof req.body === "object" ? JSON.stringify(req.body) : typeof req.body === "string" ? req.body : null;
-  const execution = await executeSimulation(simulation, {}, {
+  const capturedRequest = {
     method: toProxyHttpMethod(req.method),
     headers,
     queryParams,
     requestBody: body,
     pathSuffix: suffix,
-    source: dashboardSession ? "dashboard" : "external",
+    source: dashboardSession ? "dashboard" as const : "external" as const,
     tokenAuthenticated: !dashboardSession,
     requestIp: clientIp(req),
-  }, { preserveRawResponseHeaders: true });
+  };
+  const execution = await executeSimulation(simulation, {}, capturedRequest, { preserveRawResponseHeaders: true });
+  if (!dashboardSession) {
+    try {
+      const context = { ...capturedRequest, targetUrl: simulation.targetUrl };
+      const encryptedContext = encryptRequestContext(execution.id, context);
+      const expiresAt = requestContextExpiry();
+      await db.delete(executionRequestContextsTable).where(lt(executionRequestContextsTable.expiresAt, now()));
+      await db.insert(executionRequestContextsTable).values({ executionId: execution.id, encryptedContext, expiresAt }).onConflictDoUpdate({
+        target: executionRequestContextsTable.executionId,
+        set: { encryptedContext, expiresAt },
+      });
+    } catch {
+      // Request execution must not fail if the optional short-lived replay context cannot be saved.
+    }
+  }
   if (execution.status === "timeout" && execution.failureType === "none") {
     sendUpstreamTimeout(res);
     return;

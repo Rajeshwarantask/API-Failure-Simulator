@@ -155,6 +155,12 @@ export const executionsTable = pgTable("executions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const executionRequestContextsTable = pgTable("execution_request_contexts", {
+  executionId: integer("execution_id").primaryKey().references(() => executionsTable.id, { onDelete: "cascade" }),
+  encryptedContext: text("encrypted_context").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
+
 export const insertSimulationSchema = createInsertSchema(simulationsTable).omit({
   id: true,
   ownerId: true,

@@ -49,6 +49,7 @@ export type RequestOverrides = {
   queryParams?: Record<string, string>;
   requestBody?: string | null;
   pathSuffix?: string;
+  targetUrl?: string;
   source?: "dashboard" | "external";
   tokenAuthenticated?: boolean;
   requestIp?: string | null;

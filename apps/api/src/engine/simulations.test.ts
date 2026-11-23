@@ -305,9 +305,12 @@ describe("deterministic execution engine", () => {
     const context = {
       method: "GET" as const,
       pathSuffix: "/api/task/send/alltask",
+      targetUrl: "https://upstream.example.test/",
       headers: { cookie: "session=incoming-secret" },
       queryParams: { page: "3", filter: "ready" },
-      source: "dashboard" as const,
+      source: "external" as const,
+      tokenAuthenticated: true,
+      requestIp: "192.0.2.15",
     };
     const first = await execute(simulation, {
       failureType: "http_404",

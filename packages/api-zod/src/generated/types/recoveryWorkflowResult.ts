@@ -10,4 +10,6 @@ import type { Execution } from './execution';
 export interface RecoveryWorkflowResult {
   executions: Execution[];
   recovered: boolean;
+  authenticationFailure?: boolean;
+  message?: string;
 }
