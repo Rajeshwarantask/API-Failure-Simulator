@@ -1,6 +1,7 @@
 import { createServer } from "node:net";
 import { describe, expect, it } from "vitest";
 import {
+  buildUpstreamUrl,
   createConnectionLookup,
   createSafeFetch,
   isBlockedAddress,
@@ -40,6 +41,29 @@ const blockedTargets = [
   "http://224.0.0.1",
   "http://240.0.0.1",
 ];
+
+describe("upstream URL construction", () => {
+  it.each([
+    ["GET", "/api/task/send/alltask", "https://tasks.example.test/api/task/send/alltask"],
+    ["POST", "/api/task/addtask", "https://tasks.example.test/api/task/addtask"],
+    ["DELETE", "/api/task/delete", "https://tasks.example.test/api/task/delete"],
+  ])("builds the %s API endpoint from a base target", (_method, path, expected) => {
+    expect(buildUpstreamUrl("https://tasks.example.test", path)).toBe(expected);
+  });
+
+  it("ignores any legacy target pathname, preserves query encoding, and excludes internal routing metadata", () => {
+    expect(buildUpstreamUrl(
+      "https://tasks.example.test/api/task/send/alltask/?tenant=blue&path=proxy%2Fsimulations%2F20%2Fapi%2Ftask%2Fsend%2Falltask",
+      "/api/task/addtask/",
+      { q: "a b&c", __faultline_path: "internal", path: "/search" },
+    )).toBe("https://tasks.example.test/api/task/addtask?tenant=blue&q=a+b%26c&path=%2Fsearch");
+  });
+
+  it("rejects full URLs and missing request paths", () => {
+    expect(() => buildUpstreamUrl("https://tasks.example.test", "https://other.test/api")).toThrow("request_path_must_be_relative");
+    expect(() => buildUpstreamUrl("https://tasks.example.test", undefined)).toThrow("request_path_required");
+  });
+});
 
 describe("target URL policy", () => {
   it.each(blockedTargets)(

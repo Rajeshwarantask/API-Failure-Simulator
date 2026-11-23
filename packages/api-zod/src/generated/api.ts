@@ -514,7 +514,8 @@ export const RunSimulationBody = zod.object({
   "statusCode": zod.number().int().min(runSimulationBodyStatusCodeMin).max(runSimulationBodyStatusCodeMax).optional(),
   "latencyMs": zod.number().int().min(runSimulationBodyLatencyMsMin).max(runSimulationBodyLatencyMsMax).optional(),
   "responseBody": zod.string().optional(),
-  "seed": zod.number().int().min(runSimulationBodySeedMin).max(runSimulationBodySeedMax).optional().describe('Explicit unsigned 32-bit seed; omitted seeds are generated securely.')
+  "seed": zod.number().int().min(runSimulationBodySeedMin).max(runSimulationBodySeedMax).optional().describe('Explicit unsigned 32-bit seed; omitted seeds are generated securely.'),
+  "pathSuffix": zod.string().max(2048).optional()
 })
 
 export const runSimulationResponseSeedMin = 0;

@@ -368,12 +368,21 @@ router.post("/simulations/:id/executions", async (req: AuthenticatedRequest, res
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  const pathSuffix = parsed.data.pathSuffix?.trim();
+  if (!pathSuffix) {
+    res.status(400).json({ error: "An API request path is required for Dashboard Run now." });
+    return;
+  }
+  if (/^[a-z][a-z\\d+.-]*:\/\//i.test(pathSuffix) || pathSuffix.includes("?")) {
+    res.status(400).json({ error: "Enter a relative API path, such as /api/task/addtask, without a query string." });
+    return;
+  }
   const simulation = await getSimulation(requireUserId(req), params.data.id);
   if (!simulation) {
     res.status(404).json({ error: "Simulation not found" });
     return;
   }
-  const execution = await executeSimulation(simulation, parsed.data);
+  const execution = await executeSimulation(simulation, {}, { pathSuffix });
   res.status(201).json(RunSimulationResponse.parse(execution));
 });
 
@@ -451,6 +460,7 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
     const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
     requestOverrides = {
       ...captured,
+      targetUrl: simulation.targetUrl,
       method: typeof request.method === "string" ? toHttpMethod(request.method) : captured.method,
       pathSuffix: typeof request.pathSuffix === "string" && request.pathSuffix.trim() ? request.pathSuffix : captured.pathSuffix,
       headers: isStringRecord(request.headers) ? { ...captured.headers, ...request.headers } : captured.headers,
@@ -520,13 +530,44 @@ router.post("/executions/:id/replay", async (req: AuthenticatedRequest, res): Pr
     responseBody: parsed.data.responseBody,
     seed: parsed.data.seed,
   };
-  const requestOverrides = {
+  const snapshotPath = (execution.configSnapshot as { request?: { pathSuffix?: string } } | null)?.request?.pathSuffix;
+  const originalPath = new URL(execution.url).pathname;
+  let requestOverrides: RequestOverrides = {
     method: toHttpMethod(execution.method),
     headers: execution.requestHeaders,
     queryParams: execution.requestQuery,
     requestBody: execution.requestBody,
+    pathSuffix: snapshotPath || originalPath,
   };
   const mode = parsed.data.mode ?? "reproduce";
+  if (mode === "reexecute" && execution.source === "external") {
+    const [contextRow] = await db.select().from(executionRequestContextsTable).where(and(
+      eq(executionRequestContextsTable.executionId, execution.id),
+      gt(executionRequestContextsTable.expiresAt, now()),
+    )).limit(1);
+    const hasRedactedCredentials = [execution.requestHeaders.cookie, execution.requestHeaders.authorization]
+      .some((value) => value === "[REDACTED]");
+    if (!contextRow && (execution.tokenAuthenticated || hasRedactedCredentials)) {
+      res.status(410).json({ error: "The captured authentication context expired or is unavailable. Capture a new authenticated request before reexecuting." });
+      return;
+    }
+    if (contextRow) {
+      try {
+        const captured = decryptRequestContext(execution.id, contextRow.encryptedContext);
+        requestOverrides = {
+          ...captured,
+          targetUrl: simulation.targetUrl,
+          method: toHttpMethod(execution.method),
+          pathSuffix: snapshotPath || captured.pathSuffix || originalPath,
+          queryParams: captured.queryParams ?? execution.requestQuery,
+          requestBody: captured.requestBody ?? execution.requestBody,
+        };
+      } catch {
+        res.status(410).json({ error: "The captured authentication context is unavailable. Capture a new authenticated request before reexecuting." });
+        return;
+      }
+    }
+  }
   if (mode === "reproduce" && (execution.seed === null || execution.configSnapshot === null)) {
     res.status(409).json({ error: "Deterministic replay is unavailable for this older execution. Select reexecute mode." });
     return;
