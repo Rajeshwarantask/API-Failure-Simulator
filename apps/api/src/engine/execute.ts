@@ -34,17 +34,23 @@ export function buildUrl(targetUrl: string, query: Record<string, string>): stri
   return url.toString();
 }
 
-function createTimeline(type: FailureType, baseTime: Date) {
+function createTimeline(
+  type: FailureType,
+  baseTime: Date,
+  details: { conditionsMatched: boolean; injected: boolean; upstreamStatus: number | null; upstreamAttempted: boolean },
+) {
   const received = new Date(baseTime.getTime());
   const injected = new Date(baseTime.getTime() + 8);
   const generated = new Date(baseTime.getTime() + 18);
   const completed = new Date(baseTime.getTime() + 28);
   return [
     { label: "Request received", timestamp: received.toISOString(), tone: "neutral" as const },
-    ...(type !== "none"
-      ? [{ label: "Failure rule evaluated", timestamp: injected.toISOString(), tone: "warning" as const }]
-      : []),
-    { label: "Response generated", timestamp: generated.toISOString(), tone: type === "none" ? ("success" as const) : ("danger" as const) },
+    { label: details.conditionsMatched ? "Request conditions matched" : "Request conditions did not match", timestamp: injected.toISOString(), tone: details.conditionsMatched ? "success" as const : "warning" as const },
+    { label: details.injected ? "Failure injected" : "No failure injected", timestamp: injected.toISOString(), tone: details.injected ? "danger" as const : "success" as const },
+    ...(details.upstreamAttempted
+      ? [{ label: details.upstreamStatus === null ? "Upstream request failed" : `Upstream responded with HTTP ${details.upstreamStatus}`, timestamp: generated.toISOString(), tone: details.upstreamStatus !== null && details.upstreamStatus < 400 ? "success" as const : "warning" as const }]
+      : [{ label: "Upstream not called", timestamp: generated.toISOString(), tone: "neutral" as const }]),
+    { label: `Recovery outcome: ${type === "none" ? "pass-through" : type.replaceAll("_", " ")}`, timestamp: generated.toISOString(), tone: type === "none" ? "success" as const : "danger" as const },
     { label: "Request completed", timestamp: completed.toISOString(), tone: "neutral" as const },
   ];
 }
@@ -114,7 +120,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
     const configuredFailure = workflowStep
       ? toFailureType(workflowStep.failureType)
       : overrides.failureType ?? (simulation.enabled && conditionsMatch ? toFailureType(simulation.failureType) : "none");
-    const probability = simulation.enabled && conditionsMatch ? simulation.probability : 0;
+    const probability = workflowStep ? 100 : simulation.enabled && conditionsMatch ? simulation.probability : 0;
     const decision = decideFailure(configuredFailure, probability, seed, overrides.statusCode ?? simulation.statusCode);
     const failureType = decision.failureType;
     const isTimeout = failureType === "timeout";
@@ -126,6 +132,8 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
     let status: "success" | "failure" | "timeout" = isTimeout ? "timeout" : isFailure ? "failure" : "success";
     let finalStatus = decision.statusCode;
     let finalBody = responseBody;
+    let upstreamStatus: number | null = null;
+    let upstreamAttempted = false;
 
     if (failureType === "connection_failure") {
       finalStatus = null;
@@ -151,8 +159,12 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
 
       const shouldForward = options.allowUpstream !== false && (simulation.forwardRequest || requestOverrides.source === "external");
       if ((failureType === "none" || failureType === "latency") && shouldForward) {
+        upstreamAttempted = true;
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), Math.max(0, simulation.forwardTimeoutMs ?? 10000));
+        const forwardTimeoutMs = simulation.forwardTimeoutMs ?? 10000;
+        const timer = forwardTimeoutMs > 0
+          ? setTimeout(() => controller.abort(), forwardTimeoutMs)
+          : undefined;
         try {
           const upstream = await engine.fetch(buildUrl(effectiveTargetUrl, requestQuery), {
             method,
@@ -161,6 +173,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
             signal: controller.signal,
           });
           finalStatus = upstream.status;
+          upstreamStatus = upstream.status;
           const upstreamBody = await readCappedBody(upstream);
           finalBody = upstreamBody.body;
           responseHeaders = {};
@@ -177,7 +190,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
           finalStatus = null;
           finalBody = null;
         } finally {
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
         }
       } else if (failureType === "none" || failureType === "latency") {
         finalStatus = 200;
@@ -210,7 +223,12 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
       source: requestOverrides.source ?? "dashboard",
       tokenAuthenticated: requestOverrides.tokenAuthenticated ?? false,
       requestIp: requestOverrides.requestIp ?? null,
-      timeline: createTimeline(failureType, startedAt),
+      timeline: createTimeline(failureType, startedAt, {
+        conditionsMatched: conditionsMatch,
+        injected: decision.injected,
+        upstreamStatus,
+        upstreamAttempted,
+      }),
       createdAt: startedAt,
     });
     await engine.db.updateSimulationCounters(simulation.id, {

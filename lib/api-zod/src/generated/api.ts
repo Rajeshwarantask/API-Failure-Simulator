@@ -719,7 +719,14 @@ export const CreateRecoveryWorkflowBody = zod.object({
   "statusCode": zod.number().int().min(createRecoveryWorkflowBodyWorkflowItemStatusCodeMin).max(createRecoveryWorkflowBodyWorkflowItemStatusCodeMax).nullish(),
   "attempts": zod.number().int().min(1).max(createRecoveryWorkflowBodyWorkflowItemAttemptsMax).optional(),
   "latencyMs": zod.number().int().min(createRecoveryWorkflowBodyWorkflowItemLatencyMsMin).optional()
-})).optional()
+})).optional(),
+  "request": zod.object({
+    "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
+    "pathSuffix": zod.string().max(2048).optional(),
+    "headers": zod.record(zod.string(), zod.string()).optional(),
+    "queryParams": zod.record(zod.string(), zod.string()).optional(),
+    "requestBody": zod.string().nullable().optional()
+  }).optional()
 })
 
 export const createRecoveryWorkflowResponseExecutionsItemActualLatencyMsMin = 0;

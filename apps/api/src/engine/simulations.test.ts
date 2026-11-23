@@ -277,6 +277,129 @@ describe("deterministic execution engine", () => {
     expect(getExecution.requestHeaders.cookie).toBe("[REDACTED]");
   });
 
+  it("replays one saved non-root request across injected failure and upstream recovery attempts", async () => {
+    const calls: Array<{ url: string; method: string; cookie: string | null }> = [];
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (input, init) => {
+        calls.push({
+          url: String(input),
+          method: String(init?.method),
+          cookie: new Headers(init?.headers).get("cookie"),
+        });
+        return new Response('{"ok":true}', { status: 200 });
+      },
+      sleep: async () => {},
+      createSeed: () => 123,
+    });
+    const simulation = {
+      ...fixtureSimulation(108),
+      targetUrl: "https://upstream.example.test/",
+      method: "GET",
+      headers: { cookie: "session=saved-secret" },
+      queryParams: { page: "3" },
+      requestBody: null,
+      failureType: "none",
+      forwardRequest: true,
+    } satisfies Simulation;
+    const context = {
+      method: "GET" as const,
+      pathSuffix: "/api/task/send/alltask",
+      headers: { cookie: "session=incoming-secret" },
+      queryParams: { page: "3", filter: "ready" },
+      source: "dashboard" as const,
+    };
+    const first = await execute(simulation, {
+      failureType: "http_404",
+      statusCode: 404,
+      workflow: [{ failureType: "http_404", attempts: 1 }],
+      seed: 1,
+    }, context);
+    const second = await execute(simulation, {
+      failureType: "none",
+      workflow: [{ failureType: "none", attempts: 1 }],
+      seed: 2,
+    }, context);
+
+    expect(first.simulatedStatus).toBe(404);
+    expect(first.failureType).toBe("http_404");
+    expect(first.status).toBe("failure");
+    expect(second.simulatedStatus).toBe(200);
+    expect(second.status).toBe("success");
+    expect(calls).toEqual([{
+      url: "https://upstream.example.test/api/task/send/alltask?page=3&filter=ready",
+      method: "GET",
+      cookie: "session=incoming-secret",
+    }]);
+    expect(first.url).toBe("https://upstream.example.test/api/task/send/alltask?page=3&filter=ready");
+    expect(second.url).toBe(first.url);
+    expect(first.method).toBe("GET");
+    expect(second.method).toBe(first.method);
+    expect(first.requestHeaders.cookie).toBe("[REDACTED]");
+    expect(second.requestHeaders.cookie).toBe("[REDACTED]");
+    expect(first.requestQuery).toEqual(second.requestQuery);
+    expect(first.timeline.map(({ label }) => label)).toEqual(expect.arrayContaining([
+      "Request conditions matched",
+      "Failure injected",
+      "Upstream not called",
+      "Recovery outcome: http 404",
+    ]));
+    expect(second.timeline.map(({ label }) => label)).toEqual(expect.arrayContaining([
+      "Request conditions matched",
+      "No failure injected",
+      "Upstream responded with HTTP 200",
+      "Recovery outcome: pass-through",
+    ]));
+  });
+
+  it("does not abort a slow upstream request when forwarding timeout is zero", async () => {
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (_input, init) => new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response("slow upstream")), 1100);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      }),
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const execution = await execute({
+      ...fixtureSimulation(105),
+      failureType: "none",
+      forwardTimeoutMs: 0,
+    }, {}, { source: "external" });
+
+    expect(execution.status).toBe("success");
+    expect(execution.simulatedStatus).toBe(200);
+    expect(execution.responseBody).toBe("slow upstream");
+  });
+
+  it("still aborts upstream requests when a positive forwarding timeout is configured", async () => {
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (_input, init) => new Promise<Response>((resolve, reject) => {
+        const timer = setTimeout(() => resolve(new Response("too late")), 100);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(timer);
+          reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+      }),
+      sleep: async () => {},
+      createSeed: () => 456,
+    });
+    const execution = await execute({
+      ...fixtureSimulation(106),
+      failureType: "none",
+      forwardTimeoutMs: 10,
+    }, {}, { source: "external" });
+
+    expect(execution.status).toBe("timeout");
+    expect(execution.failureType).toBe("none");
+    expect(execution.simulatedStatus).toBeNull();
+  });
+
   it("caps upstream response bytes and persists a truncation marker", async () => {
     const body = new Uint8Array(MAX_UPSTREAM_BODY_BYTES + 8).fill(97);
     const execute = createSimulationExecutor({

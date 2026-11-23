@@ -9,6 +9,7 @@ import { createSimulationExecutor } from "../engine/execute.js";
 import { createDrizzleEngineDatabase } from "../engine/drizzleDatabase.js";
 import { reproduceExecution } from "../engine/replay.js";
 import { proxyHeaders } from "../lib/proxy-headers.js";
+import { sendUpstreamTimeout } from "../lib/proxy-response.js";
 import { validateTargetUrl } from "../lib/target-url.js";
 import { deriveSeed, generateSeed } from "../engine/prng.js";
 import { toFailureType, toHttpMethod, toProxyHttpMethod, type RunOverrides } from "../engine/types.js";
@@ -40,6 +41,11 @@ const router = Router();
 
 const now = () => new Date();
 const executeSimulation = createSimulationExecutor({ db: createDrizzleEngineDatabase(db) });
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.values(value).every((item) => typeof item === "string");
+}
 
 function parseId(value: string | string[] | undefined): number | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -404,6 +410,7 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
   const workflow = Array.isArray(req.body?.workflow) ? req.body.workflow : simulation.workflow;
   const requestedSeed = Number(req.body?.seed);
   const baseSeed = Number.isInteger(requestedSeed) && requestedSeed >= 0 && requestedSeed <= 0xffffffff ? requestedSeed : generateSeed();
+  const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
   let attemptIndex = 0;
   const executions = [];
   for (const step of workflow ?? []) {
@@ -412,7 +419,14 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
       executions.push(await executeSimulation(simulation, {
         ...step,
         failureType: toFailureType(step.failureType),
+        workflow: [{ ...step, failureType: toFailureType(step.failureType), attempts: 1 }],
         seed: deriveSeed(baseSeed, attemptIndex++),
+      }, {
+        method: typeof request.method === "string" ? toHttpMethod(request.method) : undefined,
+        pathSuffix: typeof request.pathSuffix === "string" ? request.pathSuffix : undefined,
+        headers: isStringRecord(request.headers) ? request.headers : undefined,
+        queryParams: isStringRecord(request.queryParams) ? request.queryParams : undefined,
+        requestBody: typeof request.requestBody === "string" || request.requestBody === null ? request.requestBody : undefined,
       }));
     }
   }
@@ -535,6 +549,10 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
     tokenAuthenticated: !dashboardSession,
     requestIp: clientIp(req),
   }, { preserveRawResponseHeaders: true });
+  if (execution.status === "timeout" && execution.failureType === "none") {
+    sendUpstreamTimeout(res);
+    return;
+  }
   if (execution.status === "timeout" || execution.failureType === "connection_failure") {
     res.destroy();
     return;
