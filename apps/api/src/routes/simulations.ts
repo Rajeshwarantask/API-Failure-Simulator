@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { Router, type Request, type Response } from "express";
 import { and, desc, eq, gt, isNull, lt } from "drizzle-orm";
@@ -113,6 +113,21 @@ function mapSimulation(simulation: typeof simulationsTable.$inferSelect) {
     ...simulation,
     endpoint: endpointFor(simulation.id),
   };
+}
+
+async function resolveAuthenticationContext(userId: string, executionId: number) {
+  const source = await getExecution(userId, executionId);
+  if (!source || source.source !== "external") return { error: "not_found" as const };
+  const [contextRow] = await db.select().from(executionRequestContextsTable)
+    .where(eq(executionRequestContextsTable.executionId, source.id)).limit(1);
+  if (!contextRow) return { error: "expired" as const };
+  if (contextRow.expiresAt <= now()) return { error: "expired" as const };
+  let context: RequestOverrides & { targetUrl: string };
+  try { context = decryptRequestContext(source.id, contextRow.encryptedContext); }
+  catch { return { error: "unavailable" as const }; }
+  const headers = capturedAuthenticationHeaders(context.headers);
+  if (!headers.cookie && !headers.authorization) return { error: "no_credentials" as const };
+  return { context, headers, expiresAt: contextRow.expiresAt };
 }
 
 async function getSimulation(userId: string, id: number) {
@@ -359,6 +374,48 @@ router.get("/simulations/:id/executions", async (req: AuthenticatedRequest, res)
   res.json(ListExecutionsResponse.parse(executions));
 });
 
+router.get("/auth-contexts", async (req: AuthenticatedRequest, res): Promise<void> => {
+  const userId = requireUserId(req);
+  const nowAt = now();
+  const executions = await db.select({ execution: executionsTable, simulationName: simulationsTable.name })
+    .from(executionsTable)
+    .innerJoin(simulationsTable, eq(executionsTable.simulationId, simulationsTable.id))
+    .where(and(simulationAccess(userId), gt(executionsTable.createdAt, new Date(nowAt.getTime() - 16 * 60 * 1000))))
+    .orderBy(desc(executionsTable.createdAt));
+  const contexts = await Promise.all(executions.filter(({ execution }) => execution.source === "external").map(async ({ execution, simulationName }) => {
+    const [context] = await db.select().from(executionRequestContextsTable)
+      .where(eq(executionRequestContextsTable.executionId, execution.id)).limit(1);
+    let contextStatus: "available" | "expired" | "unavailable" = !context ? "expired"
+      : context.expiresAt <= nowAt ? "expired" : "available";
+    let hasAuthentication = false;
+    let authFingerprint: string | null = null;
+    if (context && context.expiresAt > nowAt) {
+      try {
+        const secureContext = decryptRequestContext(execution.id, context.encryptedContext);
+        const headers = capturedAuthenticationHeaders(secureContext.headers);
+        hasAuthentication = Boolean(headers.cookie || headers.authorization);
+        if (hasAuthentication) authFingerprint = createHmac("sha256", process.env.SUPABASE_JWT_SECRET ?? "")
+          .update(JSON.stringify(headers)).digest("hex");
+        else contextStatus = "unavailable";
+      } catch { contextStatus = "unavailable"; }
+    }
+    let path = execution.url;
+    try { path = new URL(execution.url).pathname; } catch { path = execution.url.split("?")[0] ?? ""; }
+    return { id: execution.id, simulationName, method: execution.method, path, createdAt: execution.createdAt,
+      contextStatus, expiresAt: context?.expiresAt ?? null, hasAuthentication, authFingerprint };
+  }));
+  contexts.sort((a, b) => Number(b.contextStatus === "available" && b.hasAuthentication) - Number(a.contextStatus === "available" && a.hasAuthentication)
+    || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const seenAuthentication = new Set<string>();
+  const visibleContexts = contexts.filter((context) => {
+    if (!context.authFingerprint) return true;
+    if (seenAuthentication.has(context.authFingerprint)) return false;
+    seenAuthentication.add(context.authFingerprint);
+    return true;
+  }).map(({ authFingerprint: _fingerprint, ...context }) => context);
+  res.json(visibleContexts);
+});
+
 router.get("/simulations/:id/captured-requests", async (req: AuthenticatedRequest, res): Promise<void> => {
   const simulation = await getSimulation(requireUserId(req), Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
@@ -445,43 +502,25 @@ router.post("/simulations/:id/executions", async (req: AuthenticatedRequest, res
     res.status(404).json({ error: "Simulation not found" });
     return;
   }
+  let configuredHeaders = simulation.headers;
   if (parsed.data.attachCapturedAuthentication) {
     const authExecutionId = parsed.data.authSourceExecutionId;
     if (!authExecutionId) {
       res.status(400).json({ error: "Select a captured authentication context before running this request." }); return;
     }
-    const userId = requireUserId(req);
-    const sourceExecution = await getExecution(userId, authExecutionId);
-    if (!sourceExecution || sourceExecution.simulationId !== simulation.id || sourceExecution.source !== "external") {
-      res.status(404).json({ error: "Captured authentication context not found for this simulation." }); return;
-    }
-    const [contextRow] = await db.select().from(executionRequestContextsTable)
-      .where(eq(executionRequestContextsTable.executionId, sourceExecution.id)).limit(1);
-    if (!contextRow || contextRow.expiresAt <= now()) {
-      res.status(410).json({ error: "Authentication context expired or unavailable. Make a fresh authenticated request through the Task Manager proxy, then select it here." }); return;
-    }
-    let capturedContext: RequestOverrides & { targetUrl: string };
-    try { capturedContext = decryptRequestContext(sourceExecution.id, contextRow.encryptedContext); }
-    catch {
-      res.status(410).json({ error: "Authentication context is unavailable. Make a fresh authenticated request through the Task Manager proxy, then select it here." }); return;
-    }
-    const credentials = capturedAuthenticationHeaders(capturedContext.headers);
-    if (!credentials.cookie && !credentials.authorization) {
-      res.status(422).json({ error: "The selected captured request contains no reusable cookie or authorization header." }); return;
-    }
-    if (contextRow.expiresAt <= now()) {
-      res.status(410).json({ error: "Authentication context expired before execution. Make a fresh authenticated request through the Task Manager proxy, then run again." }); return;
-    }
-    const configuredHeaders = mergeCapturedAuthenticationHeaders(simulation.headers, credentials);
-    const execution = await executeSimulation(simulation, {}, {
-      pathSuffix,
-      headers: configuredHeaders,
-      queryParams: capturedUpstreamQuery(simulation.queryParams ?? {}, simulation.id),
-    }, { forceUpstream: true });
-    res.status(201).json(RunSimulationResponse.parse(execution));
-    return;
+    const resolved = await resolveAuthenticationContext(requireUserId(req), authExecutionId);
+    if (resolved.error === "not_found") { res.status(404).json({ error: "Captured authentication context not found." }); return; }
+    if (resolved.error === "expired") { res.status(410).json({ error: "Authentication context expired before execution. Capture a fresh authenticated request, then try again." }); return; }
+    if (resolved.error === "unavailable") { res.status(410).json({ error: "Authentication context is unavailable. Capture a fresh authenticated request, then try again." }); return; }
+    if (resolved.error === "no_credentials") { res.status(422).json({ error: "The selected context has no reusable cookie or authorization header." }); return; }
+    if (resolved.expiresAt <= now()) { res.status(410).json({ error: "Authentication context expired before execution. Capture a fresh authenticated request, then try again." }); return; }
+    configuredHeaders = mergeCapturedAuthenticationHeaders(simulation.headers, resolved.headers);
   }
-  const execution = await executeSimulation(simulation, {}, { pathSuffix });
+  const execution = await executeSimulation(simulation, {}, {
+    pathSuffix,
+    headers: configuredHeaders,
+    queryParams: capturedUpstreamQuery(simulation.queryParams ?? {}, simulation.id),
+  }, parsed.data.attachCapturedAuthentication ? { forceUpstream: true } : undefined);
   res.status(201).json(RunSimulationResponse.parse(execution));
 });
 
@@ -517,70 +556,48 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
   const userId = requireUserId(req);
   const simulation = await getSimulation(userId, Number(req.params.id));
   if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
+  const pathSuffix = simulation.dashboardRequestPath?.trim();
+  if (!pathSuffix || !pathSuffix.startsWith("/") || pathSuffix.startsWith("//") || /[?#\\\\]/.test(pathSuffix)) {
+    res.status(422).json({ error: "Set a valid Dashboard Request Path in the selected simulation before starting a recovery workflow." }); return;
+  }
   const workflow = Array.isArray(req.body?.workflow) ? req.body.workflow : simulation.workflow;
   const requestedSeed = Number(req.body?.seed);
   const baseSeed = Number.isInteger(requestedSeed) && requestedSeed >= 0 && requestedSeed <= 0xffffffff ? requestedSeed : generateSeed();
-  let requestOverrides: RequestOverrides;
-  const rawSourceExecutionId = req.body?.sourceExecutionId;
-  const sourceExecutionId = Number(rawSourceExecutionId);
-  if (rawSourceExecutionId !== undefined && (!Number.isInteger(sourceExecutionId) || sourceExecutionId <= 0)) {
-    res.status(400).json({ error: "sourceExecutionId must be a positive integer" });
-    return;
-  }
-  if (rawSourceExecutionId !== undefined) {
-    const source = await getExecution(userId, sourceExecutionId);
-    if (!source || source.simulationId !== simulation.id) { res.status(404).json({ error: "Captured execution not found for this simulation" }); return; }
-    if (source.source !== "external") { res.status(422).json({ error: "Choose a captured external request as the replay source" }); return; }
-    const [storedContext] = await db.delete(executionRequestContextsTable).where(and(
-      eq(executionRequestContextsTable.executionId, source.id),
-      gt(executionRequestContextsTable.expiresAt, now()),
-    )).returning();
-    if (!storedContext) {
-      res.status(410).json({ error: "Captured request context expired or was already used. Send the request through the proxy again, then start recovery within 15 minutes." });
-      return;
+  let requestOverrides: RequestOverrides = { pathSuffix };
+  const attachAuthentication = req.body?.attachCapturedAuthentication === true;
+  let authSourceExecutionId: number | undefined;
+  if (attachAuthentication) {
+    authSourceExecutionId = Number(req.body?.authSourceExecutionId);
+    if (!Number.isInteger(authSourceExecutionId) || authSourceExecutionId <= 0) {
+      res.status(400).json({ error: "Select a captured authentication context before starting the recovery workflow." }); return;
     }
-    let captured: RequestOverrides & { targetUrl: string };
-    try {
-      captured = decryptRequestContext(source.id, storedContext.encryptedContext);
-    } catch {
-      res.status(410).json({ error: "The captured request context is unavailable. Send the request through the proxy again." });
-      return;
-    }
-    if (!captured.headers?.cookie && !captured.headers?.authorization) {
-      res.status(422).json({ error: "The captured request has no cookie or authorization header. Capture an authenticated request before starting recovery." });
-      return;
-    }
-    const capturedQuery = captured.queryParams ?? {};
-    captured = {
-      ...captured,
-      pathSuffix: capturedProxyPath(captured.pathSuffix, capturedQuery.path, simulation.id),
-      queryParams: capturedUpstreamQuery(capturedQuery, simulation.id),
-    };
-    const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
-    requestOverrides = {
-      ...captured,
-      targetUrl: simulation.targetUrl,
-      method: typeof request.method === "string" ? toHttpMethod(request.method) : captured.method,
-      pathSuffix: typeof request.pathSuffix === "string" && request.pathSuffix.trim() ? request.pathSuffix : captured.pathSuffix,
-      headers: isStringRecord(request.headers) ? { ...captured.headers, ...request.headers } : captured.headers,
-      queryParams: isStringRecord(request.queryParams) ? { ...captured.queryParams, ...request.queryParams } : captured.queryParams,
-      requestBody: typeof request.requestBody === "string" || request.requestBody === null ? request.requestBody : captured.requestBody,
-    };
-  } else {
-    const request = req.body?.request && typeof req.body.request === "object" ? req.body.request : {};
-    requestOverrides = {
-      method: typeof request.method === "string" ? toHttpMethod(request.method) : undefined,
-      pathSuffix: typeof request.pathSuffix === "string" ? request.pathSuffix : undefined,
-      headers: isStringRecord(request.headers) ? request.headers : undefined,
-      queryParams: isStringRecord(request.queryParams) ? request.queryParams : undefined,
-      requestBody: typeof request.requestBody === "string" || request.requestBody === null ? request.requestBody : undefined,
-    };
+    const resolved = await resolveAuthenticationContext(userId, authSourceExecutionId);
+    if (resolved.error === "not_found") { res.status(404).json({ error: "Captured authentication context not found." }); return; }
+    if (resolved.error === "expired") { res.status(410).json({ error: "Authentication context expired before execution. Capture a fresh authenticated request, then try again." }); return; }
+    if (resolved.error === "unavailable") { res.status(410).json({ error: "Authentication context is unavailable. Capture a fresh authenticated request, then try again." }); return; }
+    if (resolved.error === "no_credentials") { res.status(422).json({ error: "The selected context has no reusable cookie or authorization header." }); return; }
+    requestOverrides = { pathSuffix, headers: mergeCapturedAuthenticationHeaders(simulation.headers, resolved.headers) };
   }
   let attemptIndex = 0;
   const executions = [];
   for (const step of workflow ?? []) {
     const attempts = Math.max(1, Math.min(100, Number(step.attempts ?? 1)));
     for (let attempt = 0; attempt < attempts; attempt++) {
+      if (attachAuthentication && authSourceExecutionId) {
+        const currentContext = await resolveAuthenticationContext(userId, authSourceExecutionId);
+        if (currentContext.error) {
+          const reason = currentContext.error === "expired" ? "expired" : currentContext.error === "not_found" ? "no longer accessible" : "unavailable";
+          res.status(currentContext.error === "not_found" ? 404 : currentContext.error === "no_credentials" ? 422 : 410).json({
+            error: `Authentication context became ${reason} during the recovery workflow; remaining attempts were not run.`, executions,
+          });
+          return;
+        }
+        if (currentContext.expiresAt <= now()) {
+          res.status(410).json({ error: "Authentication context expired during the recovery workflow; remaining attempts were not run.", executions });
+          return;
+        }
+        requestOverrides = { pathSuffix, headers: mergeCapturedAuthenticationHeaders(simulation.headers, currentContext.headers) };
+      }
       executions.push(await executeSimulation(simulation, {
         ...step,
         failureType: toFailureType(step.failureType),
@@ -597,7 +614,7 @@ router.post("/simulations/:id/recovery", async (req: AuthenticatedRequest, res):
   res.status(201).json({
     executions,
     recovered: upstreamSucceeded,
-    ...(authenticationFailure ? { authenticationFailure: true, message: "The upstream rejected the captured credentials (HTTP 401). Refresh the source app session and capture a new request." } : {}),
+    ...(authenticationFailure ? { authenticationFailure: true, message: "The upstream rejected the selected credentials (HTTP 401). Refresh the source app session and capture a new request." } : {}),
   });
 });
 

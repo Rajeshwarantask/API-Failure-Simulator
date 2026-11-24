@@ -96,7 +96,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  mocks.simulation = { id: 20, targetUrl: "https://tasks.example.test/", workflow: [] };
+  mocks.simulation = { id: 20, name: "Test Task App", targetUrl: "https://tasks.example.test/", dashboardRequestPath: "/api/task/addtask", method: "POST", headers: { accept: "application/json" }, queryParams: { source: "saved" }, requestBody: '{"task":"from-simulation"}', workflow: [] };
   mocks.sourceExecution = { id: 642, simulationId: 20, source: "external" };
   mocks.contextRow = {
     executionId: 642,
@@ -138,16 +138,25 @@ beforeEach(() => {
 
 async function runRecovery(
   workflow: Array<{ failureType: string; attempts: number }>,
-  request?: { pathSuffix?: string },
+  options: { attachCapturedAuthentication?: boolean; authSourceExecutionId?: number } = {},
 ) {
   return fetch(`${baseUrl}/simulations/20/recovery`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sourceExecutionId: 642, workflow, request }),
+    body: JSON.stringify({ workflow, attachCapturedAuthentication: options.attachCapturedAuthentication ?? true,
+      authSourceExecutionId: options.attachCapturedAuthentication === false ? undefined : options.authSourceExecutionId ?? 642 }),
   });
 }
 
 describe("dashboard execution paths", () => {
+  it("lists reusable context metadata without exposing encrypted credentials", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 20, source: "external", method: "POST", url: "https://tasks.example.test/api/task/addtask", createdAt: new Date().toISOString() };
+    const response = await fetch(`${baseUrl}/auth-contexts`);
+    const payload: any = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload[0]).toMatchObject({ id: 642, method: "POST", path: "/api/task/addtask", contextStatus: "available", hasAuthentication: true });
+    expect(JSON.stringify(payload)).not.toContain("session=do-not-leak");
+  });
   it("rejects Run now without an API path instead of calling the backend root", async () => {
     const response = await fetch(`${baseUrl}/simulations/20/executions`, {
       method: "POST",
@@ -248,8 +257,18 @@ describe("dashboard execution paths", () => {
     expect(mocks.executeSimulation).not.toHaveBeenCalled();
   });
 
-  it("rejects an auth context from another simulation", async () => {
+  it("reuses an authorized auth context captured from another simulation and API path", async () => {
     mocks.sourceExecution = { id: 642, simulationId: 21, source: "external" };
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathSuffix: "/api/task/custom", attachCapturedAuthentication: true, authSourceExecutionId: 642 }),
+    });
+    expect(response.status).toBe(201);
+    expect(mocks.executeSimulation.mock.calls[0][2]).toMatchObject({ pathSuffix: "/api/task/custom", headers: { cookie: "session=do-not-leak" } });
+  });
+
+  it("rejects contexts the current user cannot access", async () => {
+    mocks.sourceExecution = null;
     const response = await fetch(`${baseUrl}/simulations/20/executions`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ pathSuffix: "/api/task/custom", attachCapturedAuthentication: true, authSourceExecutionId: 642 }),
@@ -356,35 +375,49 @@ describe("captured request recovery", () => {
     const secondRequest = mocks.executeSimulation.mock.calls[1][2];
     expect(firstRequest).toEqual(secondRequest);
     expect(firstRequest.headers.cookie).toBe("session=do-not-leak");
-    expect(firstRequest.method).toBe("GET");
-    expect(firstRequest.pathSuffix).toBe("/api/task/send/alltask");
-    expect(firstRequest.queryParams).toEqual({});
+    expect(firstRequest.pathSuffix).toBe("/api/task/addtask");
+    expect(mocks.simulation.method).toBe("POST");
+    expect(mocks.simulation.queryParams).toEqual({ source: "saved" });
+    expect(mocks.simulation.requestBody).toBe('{"task":"from-simulation"}');
     expect(JSON.stringify(result)).not.toContain("session=do-not-leak");
-    expect(mocks.contextRow).toBeNull();
+    expect(mocks.contextRow).not.toBeNull();
   });
 
-  it("lets the recovery API path override the captured path while keeping captured authentication", async () => {
-    const response = await runRecovery(
-      [{ failureType: "none", attempts: 1 }],
-      { pathSuffix: "/api/task/custom" },
-    );
+  it("runs from simulation request configuration without authentication when the toggle is OFF", async () => {
+    const response = await runRecovery([{ failureType: "none", attempts: 1 }], { attachCapturedAuthentication: false });
     const result: any = await response.json();
     const request = mocks.executeSimulation.mock.calls[0][2];
 
     expect(response.status).toBe(201);
     expect(result.recovered).toBe(true);
-    expect(request.pathSuffix).toBe("/api/task/custom");
-    expect(request.headers.cookie).toBe("session=do-not-leak");
+    expect(request).toEqual({ pathSuffix: "/api/task/addtask" });
+    expect(mocks.executeSimulation.mock.calls[0][0].headers).toEqual({ accept: "application/json" });
+    expect(JSON.stringify(request)).not.toContain("session=do-not-leak");
   });
 
-  it("reports an expired captured context without attempting recovery", async () => {
+  it("rejects an expired or missing selected auth context without unauthenticated fallback", async () => {
     mocks.contextRow = null;
     const response = await runRecovery([{ failureType: "none", attempts: 1 }]);
     const result: any = await response.json();
 
     expect(response.status).toBe(410);
-    expect(result.error).toContain("expired or was already used");
+    expect(result.error).toContain("Authentication context expired");
     expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
+  it("stops subsequent attempts when the auth context expires mid-workflow and preserves the trace", async () => {
+    mocks.executeSimulation.mockImplementationOnce(async (_simulation, _overrides, request) => {
+      mocks.contextRow.expiresAt = new Date(Date.now() - 1000);
+      return { id: 711, method: "POST", url: "https://tasks.example.test/api/task/addtask", status: "failure", simulatedStatus: 503,
+        failureType: "http_503", actualLatencyMs: 1, createdAt: new Date().toISOString(), timeline: [{ label: "Injected failure before upstream execution" }],
+        requestHeaders: { cookie: "[REDACTED]" }, requestQuery: {}, requestBody: null };
+    });
+    const response = await runRecovery([{ failureType: "http_503", attempts: 2 }]);
+    const result: any = await response.json();
+    expect(response.status).toBe(410);
+    expect(result.executions).toHaveLength(1);
+    expect(JSON.stringify(result)).not.toContain("session=do-not-leak");
+    expect(mocks.executeSimulation).toHaveBeenCalledTimes(1);
   });
 
   it("reports a captured request with no authentication credentials", async () => {
@@ -401,7 +434,7 @@ describe("captured request recovery", () => {
     const result: any = await response.json();
 
     expect(response.status).toBe(422);
-    expect(result.error).toContain("no cookie or authorization header");
+    expect(result.error).toContain("no reusable cookie or authorization header");
     expect(mocks.executeSimulation).not.toHaveBeenCalled();
   });
 
@@ -433,6 +466,6 @@ describe("captured request recovery", () => {
     expect(response.status).toBe(201);
     expect(result.recovered).toBe(false);
     expect(result.authenticationFailure).toBe(true);
-    expect(result.message).toContain("upstream rejected the captured credentials");
+    expect(result.message).toContain("upstream rejected the selected credentials");
   });
 });
