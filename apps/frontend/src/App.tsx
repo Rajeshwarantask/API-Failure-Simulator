@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider, useInfiniteQuery } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { AuthGate } from '@/components/auth-gate';
 import { Toaster } from '@/components/ui/toaster';
@@ -416,6 +416,14 @@ function Detail({ id }: { id: number }) {
   const [copied, setCopied] = useState(false);
   const [tokenCopied, setTokenCopied] = useState(false);
   const [runError, setRunError] = useState('');
+  const [runPanelOpen, setRunPanelOpen] = useState(false);
+  const [runSource, setRunSource] = useState<'configuration' | 'captured'>('configuration');
+  const [capturedId, setCapturedId] = useState('');
+  const capturedRequests = useQuery({
+    queryKey: ['/api/simulations', id, 'captured-requests'],
+    enabled: runPanelOpen,
+    queryFn: () => customFetch<Array<{ id: number; method: string; path: string; createdAt: string; contextStatus: 'available' | 'expired' | 'unavailable'; expiresAt: string | null }>>(`/api/simulations/${id}/captured-requests`),
+  });
   if (isLoading) return <LoadingBlocks />;
   if (isError || !data) return <QueryError message={errorText(error)} retry={() => refetch()} />;
   const copy = () => { navigator.clipboard?.writeText(data.endpoint); setCopied(true); setTimeout(() => setCopied(false), 1600); };
@@ -423,11 +431,20 @@ function Detail({ id }: { id: number }) {
   const copyToken = () => { if (!legacyExecutionToken) return; navigator.clipboard?.writeText(legacyExecutionToken); setTokenCopied(true); setTimeout(() => setTokenCopied(false), 1600); };
   const toggle = () => update.mutate({ id, data: { enabled: !data.enabled } }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: getGetSimulationQueryKey(id) }) });
   const runNow = () => {
+    if (!runPanelOpen) { setRunPanelOpen(true); return; }
     setRunError('');
+    if (runSource === 'captured') {
+      const request = capturedRequests.data?.find((item) => String(item.id) === capturedId);
+      if (!request) { setRunError('Select a captured request first.'); return; }
+      if (request.contextStatus !== 'available') { setRunError('This captured request context is expired or unavailable. Send a new authenticated request through the proxy, then select it here.'); return; }
+      run.mutate({ id, data: { sourceExecutionId: request.id } }, { onSuccess: execution => setLocation(`/executions/${execution.id}`), onError: error => setRunError(errorText(error)) });
+      return;
+    }
     if (!data.dashboardRequestPath?.trim()) { setRunError('Set a Dashboard Request Path in Edit Simulation before using Run now.'); return; }
     run.mutate({ id, data: { pathSuffix: data.dashboardRequestPath } }, { onSuccess: execution => setLocation(`/executions/${execution.id}`), onError: error => setRunError(errorText(error)) });
   };
-  return <><PageHeading breadcrumbs={[{ label: 'Workspace' }, { label: 'Simulations', href: '/simulations' }, { label: data.name }]} title={data.name} description={data.description ?? 'No description provided.'} actions={<><Button variant="secondary" onClick={() => setLocation(`/simulations/${id}/edit`)} data-testid="button-detail-edit"><Pencil size={14} /> Edit</Button><Button variant="secondary" onClick={() => setLocation(`/simulations/new?duplicate=${id}`)} data-testid="button-detail-duplicate"><Copy size={14} /> Duplicate</Button><Button onClick={runNow} disabled={run.isPending} data-testid="button-detail-run"><Play size={14} /> Run now</Button></>} />
+  return <><PageHeading breadcrumbs={[{ label: 'Workspace' }, { label: 'Simulations', href: '/simulations' }, { label: data.name }]} title={data.name} description={data.description ?? 'No description provided.'} actions={<><Button variant="secondary" onClick={() => setLocation(`/simulations/${id}/edit`)} data-testid="button-detail-edit"><Pencil size={14} /> Edit</Button><Button variant="secondary" onClick={() => setLocation(`/simulations/new?duplicate=${id}`)} data-testid="button-detail-duplicate"><Copy size={14} /> Duplicate</Button><Button onClick={runNow} disabled={run.isPending} data-testid="button-detail-run"><Play size={14} /> {runPanelOpen ? 'Execute run' : 'Run now'}</Button></>} />
+    {runPanelOpen && <Panel className="mb-5"><PanelTitle icon={Play} title="Run now" meta="CHOOSE REQUEST SOURCE" /><div className="space-y-4 p-5"><div className="flex flex-wrap gap-2" role="group" aria-label="Request source"><Button variant={runSource === 'configuration' ? 'primary' : 'secondary'} onClick={() => setRunSource('configuration')}>Use simulation configuration</Button><Button variant={runSource === 'captured' ? 'primary' : 'secondary'} onClick={() => setRunSource('captured')}>Use a captured request</Button></div>{runSource === 'configuration' ? <p className="text-xs leading-5 text-muted-foreground">Uses the saved Dashboard Request Path, method, headers, query, and body. Authentication is only available if configured in the simulation.</p> : <div className="space-y-3"><label htmlFor="captured-request" className="block text-xs font-medium">Recent captured requests</label>{capturedRequests.isLoading ? <p className="text-xs text-muted-foreground">Loading captured requests…</p> : capturedRequests.isError ? <p role="alert" className="text-xs text-destructive">Could not load captured requests.</p> : <select id="captured-request" value={capturedId} onChange={event => setCapturedId(event.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"><option value="">Select a captured request</option>{(capturedRequests.data ?? []).map(request => <option key={request.id} value={request.id}>{request.method} {request.path} · {formatDate(request.createdAt)} · auth context {request.contextStatus}{request.expiresAt ? ` until ${formatDate(request.expiresAt)}` : ''}</option>)}</select>}<p className="text-xs leading-5 text-muted-foreground">Captured cookies and authorization headers are kept encrypted on the server and are never shown here. Expired contexts require a new authenticated proxy request.</p></div>}</div></Panel>}
     {runError && <div role="alert" className="mb-5 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs text-destructive">{runError}</div>}
     <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Stat label="Executions" value={formatNumber(data.requestCount)} detail="total runs" icon={Activity} /><Stat label="Injected" value={formatNumber(data.failedCount)} detail={`${pct(data.failedCount, data.requestCount)} failure rate`} tone="red" icon={ShieldAlert} /><Stat label="Pass-through" value={formatNumber(data.successCount)} detail="forwarded without injection" tone="teal" icon={Check} /><Stat label="Last executed" value={<span className="text-2xl">{formatDate(data.lastExecutedAt)}</span>} detail={`updated ${formatDate(data.updatedAt)}`} icon={Clock3} /></div>
      <div className="grid min-w-0 items-stretch gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,.85fr)]">

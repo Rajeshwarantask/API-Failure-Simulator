@@ -358,6 +358,27 @@ router.get("/simulations/:id/executions", async (req: AuthenticatedRequest, res)
   res.json(ListExecutionsResponse.parse(executions));
 });
 
+router.get("/simulations/:id/captured-requests", async (req: AuthenticatedRequest, res): Promise<void> => {
+  const simulation = await getSimulation(requireUserId(req), Number(req.params.id));
+  if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
+  const executions = await db.select().from(executionsTable)
+    .where(eq(executionsTable.simulationId, simulation.id))
+    .orderBy(desc(executionsTable.createdAt)).limit(100);
+  const nowAt = now();
+  const captured = await Promise.all(executions.filter((execution) => execution.source === "external").map(async (execution) => {
+    const [context] = await db.select().from(executionRequestContextsTable)
+      .where(eq(executionRequestContextsTable.executionId, execution.id)).limit(1);
+    const authExpected = execution.tokenAuthenticated || Object.keys(execution.requestHeaders ?? {}).some((name) => ["cookie", "authorization"].includes(name.toLowerCase()));
+    const contextStatus = !context ? (authExpected ? "expired" : "unavailable")
+      : context.expiresAt <= nowAt ? "expired" : "available";
+    let path = execution.url;
+    try { path = new URL(execution.url).pathname; } catch { path = execution.url.split("?")[0] ?? ""; }
+    return { id: execution.id, method: execution.method, path, createdAt: execution.createdAt,
+      contextStatus, expiresAt: context?.expiresAt ?? null };
+  }));
+  res.json(captured);
+});
+
 router.post("/simulations/:id/executions", async (req: AuthenticatedRequest, res): Promise<void> => {
   const params = RunSimulationParams.safeParse(req.params);
   const parsed = RunSimulationBody.safeParse(req.body ?? {});
@@ -370,6 +391,37 @@ router.post("/simulations/:id/executions", async (req: AuthenticatedRequest, res
     return;
   }
   const pathSuffix = parsed.data.pathSuffix?.trim();
+  if (parsed.data.sourceExecutionId !== undefined) {
+    const userId = requireUserId(req);
+    const sourceExecution = await getExecution(userId, parsed.data.sourceExecutionId);
+    if (!sourceExecution || sourceExecution.simulationId !== params.data.id || sourceExecution.source !== "external") {
+      res.status(404).json({ error: "Captured request not found for this simulation" }); return;
+    }
+    const [contextRow] = await db.select().from(executionRequestContextsTable)
+      .where(eq(executionRequestContextsTable.executionId, sourceExecution.id)).limit(1);
+    if (!contextRow || contextRow.expiresAt <= now()) {
+      res.status(410).json({ error: "Captured request context expired or is unavailable. Send a new authenticated request through the proxy, then select it here." }); return;
+    }
+    let captured: RequestOverrides & { targetUrl: string };
+    try { captured = decryptRequestContext(sourceExecution.id, contextRow.encryptedContext); }
+    catch { res.status(410).json({ error: "Captured request context is unavailable. Send a new authenticated request through the proxy, then select it here." }); return; }
+    const simulation = await getSimulation(userId, params.data.id);
+    if (!simulation) { res.status(404).json({ error: "Simulation not found" }); return; }
+    const capturedPath = capturedProxyPath(captured.pathSuffix, captured.queryParams?.path, simulation.id);
+    if (!capturedPath) { res.status(422).json({ error: "The captured request does not include a valid API path." }); return; }
+    const requestOverrides: RequestOverrides = {
+      method: captured.method,
+      headers: captured.headers,
+      queryParams: captured.queryParams ? capturedUpstreamQuery(captured.queryParams, simulation.id) : {},
+      requestBody: captured.requestBody,
+      pathSuffix: capturedPath,
+      source: "dashboard",
+      tokenAuthenticated: sourceExecution.tokenAuthenticated,
+    };
+    const execution = await executeSimulation(simulation, {}, requestOverrides, { forceUpstream: true });
+    res.status(201).json(RunSimulationResponse.parse(execution));
+    return;
+  }
   if (!pathSuffix) {
     res.status(400).json({ error: "An API request path is required for Dashboard Run now." });
     return;

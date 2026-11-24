@@ -96,7 +96,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
     simulation: Simulation,
     overrides: RunOverrides = {},
     requestOverrides: RequestOverrides = {},
-    options: { allowUpstream?: boolean; preserveRawResponseHeaders?: boolean } = {},
+    options: { allowUpstream?: boolean; forceUpstream?: boolean; preserveRawResponseHeaders?: boolean } = {},
   ) {
     const startedAt = engine.now();
     const seed = overrides.seed ?? engine.createSeed();
@@ -154,7 +154,7 @@ export function createSimulationExecutor(dependencies: EngineDependencies) {
     } else {
       if (configuredLatency > 0) await engine.sleep(configuredLatency);
 
-      const shouldForward = options.allowUpstream !== false && (simulation.forwardRequest || requestOverrides.source === "external");
+      const shouldForward = options.allowUpstream !== false && (options.forceUpstream === true || simulation.forwardRequest || requestOverrides.source === "external");
       if ((failureType === "none" || failureType === "latency") && shouldForward) {
         upstreamAttempted = true;
         const controller = new AbortController();
