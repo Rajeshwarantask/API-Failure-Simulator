@@ -16,6 +16,7 @@ export interface SimulationInput {
   name: string;
   description?: string;
   targetUrl: string;
+  dashboardRequestPath?: string;
   method: HttpMethod;
   headers?: KeyValueMap;
   queryParams?: KeyValueMap;

@@ -77,6 +77,8 @@ export interface Simulation {
   /** @nullable */
   description?: string | null;
   targetUrl: string;
+  /** @nullable */
+  dashboardRequestPath?: string | null;
   method: HttpMethod;
   headers: KeyValueMap;
   queryParams: KeyValueMap;
@@ -133,6 +135,7 @@ export interface SimulationInput {
   name: string;
   description?: string;
   targetUrl: string;
+  dashboardRequestPath?: string;
   method: HttpMethod;
   headers?: KeyValueMap;
   queryParams?: KeyValueMap;
@@ -188,6 +191,7 @@ export interface SimulationUpdate {
   name?: string;
   description?: string;
   targetUrl?: string;
+  dashboardRequestPath?: string;
   method?: HttpMethod;
   headers?: KeyValueMap;
   queryParams?: KeyValueMap;

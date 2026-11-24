@@ -17,6 +17,8 @@ export interface Simulation {
   /** @nullable */
   description?: string | null;
   targetUrl: string;
+  /** @nullable */
+  dashboardRequestPath?: string | null;
   method: HttpMethod;
   headers: KeyValueMap;
   queryParams: KeyValueMap;
