@@ -248,7 +248,7 @@ describe("deterministic execution engine", () => {
       { preserveRawResponseHeaders: true },
     );
 
-    expect(outgoingHeaders.authorization).toBe("Bearer config-secret");
+    expect(outgoingHeaders.authorization).toBe("Bearer caller-secret");
     expect(outgoingHeaders.cookie).toBe("session=caller-secret");
     expect(outgoingHeaders["x-faultline-key"]).toBe("internal-secret");
     expect(outgoingHeaders["x-faultline-token"]).toBeUndefined();

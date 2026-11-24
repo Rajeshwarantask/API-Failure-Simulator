@@ -504,6 +504,10 @@ components:
         latencyMs: { type: integer, minimum: 0, maximum: 120000 }
         responseBody: { type: string }
         seed: { type: integer, minimum: 0, maximum: 4294967295, description: Explicit unsigned 32-bit seed; omitted seeds are generated securely. }
+        pathSuffix: { type: string, maxLength: 2048 }
+        sourceExecutionId: { type: integer, minimum: 1 }
+        attachCapturedAuthentication: { type: boolean }
+        authSourceExecutionId: { type: integer, minimum: 1 }
     ReplayInput:
       type: object
       properties:

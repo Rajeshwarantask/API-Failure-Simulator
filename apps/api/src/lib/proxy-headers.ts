@@ -2,6 +2,7 @@ const allowedIncomingHeaders = [
   "accept",
   "content-type",
   "cookie",
+  "authorization",
   "user-agent",
   "x-request-id",
 ] as const;

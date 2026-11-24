@@ -3,7 +3,7 @@ import { proxyHeaders } from "./proxy-headers.js";
 import { redactExecutionData } from "./target-url.js";
 
 describe("proxy header policy", () => {
-  it("forwards incoming cookies while preserving configured headers and the incoming allowlist", () => {
+  it("forwards incoming cookies and authorization while preserving configured headers and the incoming allowlist", () => {
     const headers = proxyHeaders(
       {
         Authorization: "Bearer configured-secret",
@@ -26,7 +26,7 @@ describe("proxy header policy", () => {
 
     expect(headers).toEqual({
       accept: "application/problem+json",
-      authorization: "Bearer configured-secret",
+      authorization: "Bearer caller-secret",
       cookie: "caller=session",
       "content-type": "application/json",
       "user-agent": "test-agent",
@@ -34,7 +34,7 @@ describe("proxy header policy", () => {
       "x-request-id": "request-123",
       "x-service-key": "configured-key",
     });
-    expect(Object.values(headers)).not.toContain("Bearer caller-secret");
+    expect(headers.authorization).toBe("Bearer caller-secret");
   });
 
   it("preserves multiple cookies and works when the Cookie header is absent", () => {
