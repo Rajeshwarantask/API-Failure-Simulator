@@ -34,6 +34,7 @@ export const simulationsTable = pgTable("simulations", {
   name: text("name").notNull(),
   description: text("description"),
   targetUrl: text("target_url").notNull(),
+  dashboardRequestPath: text("dashboard_request_path"),
   method: text("method").notNull(),
   headers: jsonb("headers").$type<Record<string, string>>().notNull().default({}),
   queryParams: jsonb("query_params").$type<Record<string, string>>().notNull().default({}),

@@ -31,6 +31,7 @@ function fixtureSimulation(id: number): Simulation {
     name: `scenario-${id}`,
     description: null,
     targetUrl: "https://upstream.example.test/resource",
+    dashboardRequestPath: null,
     method: "POST",
     headers: {},
     queryParams: {},

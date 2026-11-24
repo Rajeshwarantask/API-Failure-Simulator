@@ -189,6 +189,7 @@ router.post("/simulations", async (req: AuthenticatedRequest, res): Promise<void
       name: data.name,
       description: data.description ?? null,
       targetUrl: data.targetUrl,
+      dashboardRequestPath: data.dashboardRequestPath ?? null,
       method: data.method,
       headers: data.headers ?? {},
       queryParams: data.queryParams ?? {},
