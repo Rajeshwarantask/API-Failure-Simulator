@@ -17,7 +17,10 @@ export interface Simulation {
   /** @nullable */
   description?: string | null;
   targetUrl: string;
-  /** @nullable */
+  /**
+     * @maxLength 2048
+     * @nullable
+     */
   dashboardRequestPath?: string | null;
   method: HttpMethod;
   headers: KeyValueMap;

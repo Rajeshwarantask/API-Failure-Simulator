@@ -9,8 +9,18 @@ import type { RecoveryWorkflowInputRequest } from './recoveryWorkflowInputReques
 import type { WorkflowStep } from './workflowStep';
 
 export interface RecoveryWorkflowInput {
-  /** @minimum 1 */
+  /**
+     * Deprecated legacy captured-request replay source. New recovery workflows use the selected simulation configuration.
+     * @minimum 1
+     */
   sourceExecutionId?: number;
+  /** Attach credentials from an independently selected encrypted captured authentication context. */
+  attachCapturedAuthentication?: boolean;
+  /**
+     * ID of a captured authentication context owned by the current user.
+     * @minimum 1
+     */
+  authSourceExecutionId?: number;
   /**
      * @minimum 0
      * @maximum 4294967295

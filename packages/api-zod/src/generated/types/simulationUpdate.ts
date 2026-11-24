@@ -16,6 +16,7 @@ export interface SimulationUpdate {
   name?: string;
   description?: string;
   targetUrl?: string;
+  /** @maxLength 2048 */
   dashboardRequestPath?: string;
   method?: HttpMethod;
   headers?: KeyValueMap;

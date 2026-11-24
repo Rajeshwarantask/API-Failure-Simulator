@@ -61,6 +61,8 @@ export const GetDashboardSummaryResponse = zod.object({
 /**
  * @summary List simulations
  */
+export const listSimulationsResponseDashboardRequestPathMax = 2048;
+
 export const listSimulationsResponseLatencyMsMin = 0;
 
 export const listSimulationsResponseTimeoutMsMin = 0;
@@ -86,7 +88,7 @@ export const ListSimulationsResponseItem = zod.object({
   "name": zod.string(),
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
-  "dashboardRequestPath": zod.string().max(2048).refine(value => value.startsWith('/') && !value.startsWith('//') && !/[?#\\\\]/.test(value), 'Enter a relative API path without a query string.').nullish(),
+  "dashboardRequestPath": zod.string().max(listSimulationsResponseDashboardRequestPathMax).nullish(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "headers": zod.record(zod.string(), zod.string()),
   "queryParams": zod.record(zod.string(), zod.string()),
@@ -123,6 +125,8 @@ export const ListSimulationsResponse = zod.array(ListSimulationsResponseItem)
  * @summary Create a simulation
  */
 
+export const createSimulationBodyDashboardRequestPathMax = 2048;
+
 export const createSimulationBodyStatusCodeMin = 100;
 export const createSimulationBodyStatusCodeMax = 599;
 
@@ -147,7 +151,7 @@ export const CreateSimulationBody = zod.object({
   "name": zod.string().min(1),
   "description": zod.string().optional(),
   "targetUrl": zod.string().url(),
-  "dashboardRequestPath": zod.string().max(2048).refine(value => value.startsWith('/') && !value.startsWith('//') && !/[?#\\\\]/.test(value), 'Enter a relative API path without a query string.').nullish(),
+  "dashboardRequestPath": zod.string().max(createSimulationBodyDashboardRequestPathMax).optional(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "headers": zod.record(zod.string(), zod.string()).optional(),
   "queryParams": zod.record(zod.string(), zod.string()).optional(),
@@ -170,6 +174,8 @@ export const CreateSimulationBody = zod.object({
   "preserveHeaders": zod.boolean().optional(),
   "enabled": zod.boolean().optional()
 })
+
+export const createSimulationResponseDashboardRequestPathMax = 2048;
 
 export const createSimulationResponseLatencyMsMin = 0;
 
@@ -196,7 +202,7 @@ export const CreateSimulationResponse = zod.object({
   "name": zod.string(),
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
-  "dashboardRequestPath": zod.string().max(2048).refine(value => value.startsWith('/') && !value.startsWith('//') && !/[?#\\\\]/.test(value), 'Enter a relative API path without a query string.').nullish(),
+  "dashboardRequestPath": zod.string().max(createSimulationResponseDashboardRequestPathMax).nullish(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "headers": zod.record(zod.string(), zod.string()),
   "queryParams": zod.record(zod.string(), zod.string()),
@@ -238,6 +244,8 @@ export const GetSimulationParams = zod.object({
   "id": zod.coerce.number().int().min(1)
 })
 
+export const getSimulationResponseOneDashboardRequestPathMax = 2048;
+
 export const getSimulationResponseOneLatencyMsMin = 0;
 
 export const getSimulationResponseOneTimeoutMsMin = 0;
@@ -268,7 +276,7 @@ export const GetSimulationResponse = zod.object({
   "name": zod.string(),
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
-  "dashboardRequestPath": zod.string().max(2048).refine(value => value.startsWith('/') && !value.startsWith('//') && !/[?#\\\\]/.test(value), 'Enter a relative API path without a query string.').nullish(),
+  "dashboardRequestPath": zod.string().max(getSimulationResponseOneDashboardRequestPathMax).nullish(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "headers": zod.record(zod.string(), zod.string()),
   "queryParams": zod.record(zod.string(), zod.string()),
@@ -334,6 +342,8 @@ export const UpdateSimulationParams = zod.object({
 })
 
 
+export const updateSimulationBodyDashboardRequestPathMax = 2048;
+
 export const updateSimulationBodyStatusCodeMin = 100;
 export const updateSimulationBodyStatusCodeMax = 599;
 
@@ -358,7 +368,7 @@ export const UpdateSimulationBody = zod.object({
   "name": zod.string().min(1).optional(),
   "description": zod.string().optional(),
   "targetUrl": zod.string().url().optional(),
-  "dashboardRequestPath": zod.string().max(2048).refine(value => value.startsWith('/') && !value.startsWith('//') && !/[?#\\\\]/.test(value), 'Enter a relative API path without a query string.').nullish(),
+  "dashboardRequestPath": zod.string().max(updateSimulationBodyDashboardRequestPathMax).optional(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']).optional(),
   "headers": zod.record(zod.string(), zod.string()).optional(),
   "queryParams": zod.record(zod.string(), zod.string()).optional(),
@@ -381,6 +391,8 @@ export const UpdateSimulationBody = zod.object({
   "preserveHeaders": zod.boolean().optional(),
   "enabled": zod.boolean().optional()
 })
+
+export const updateSimulationResponseDashboardRequestPathMax = 2048;
 
 export const updateSimulationResponseLatencyMsMin = 0;
 
@@ -407,7 +419,7 @@ export const UpdateSimulationResponse = zod.object({
   "name": zod.string(),
   "description": zod.string().nullish(),
   "targetUrl": zod.string().url(),
-  "dashboardRequestPath": zod.string().max(2048).refine(value => value.startsWith('/') && !value.startsWith('//') && !/[?#\\\\]/.test(value), 'Enter a relative API path without a query string.').nullish(),
+  "dashboardRequestPath": zod.string().max(updateSimulationResponseDashboardRequestPathMax).nullish(),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
   "headers": zod.record(zod.string(), zod.string()),
   "queryParams": zod.record(zod.string(), zod.string()),
@@ -513,6 +525,10 @@ export const runSimulationBodyLatencyMsMax = 120000;
 export const runSimulationBodySeedMin = 0;
 export const runSimulationBodySeedMax = 4294967295;
 
+export const runSimulationBodyPathSuffixMax = 2048;
+
+
+
 
 
 export const RunSimulationBody = zod.object({
@@ -521,7 +537,7 @@ export const RunSimulationBody = zod.object({
   "latencyMs": zod.number().int().min(runSimulationBodyLatencyMsMin).max(runSimulationBodyLatencyMsMax).optional(),
   "responseBody": zod.string().optional(),
   "seed": zod.number().int().min(runSimulationBodySeedMin).max(runSimulationBodySeedMax).optional().describe('Explicit unsigned 32-bit seed; omitted seeds are generated securely.'),
-  "pathSuffix": zod.string().max(2048).optional(),
+  "pathSuffix": zod.string().max(runSimulationBodyPathSuffixMax).optional(),
   "sourceExecutionId": zod.number().int().min(1).optional(),
   "attachCapturedAuthentication": zod.boolean().optional(),
   "authSourceExecutionId": zod.number().int().min(1).optional()
@@ -757,6 +773,7 @@ export const CreateRecoveryWorkflowParams = zod.object({
 })
 
 
+
 export const createRecoveryWorkflowBodySeedMin = 0;
 export const createRecoveryWorkflowBodySeedMax = 4294967295;
 
@@ -770,7 +787,9 @@ export const createRecoveryWorkflowBodyWorkflowItemLatencyMsMin = 0;
 
 
 export const CreateRecoveryWorkflowBody = zod.object({
-  "sourceExecutionId": zod.number().int().min(1).optional(),
+  "sourceExecutionId": zod.number().int().min(1).optional().describe('Deprecated legacy captured-request replay source. New recovery workflows use the selected simulation configuration.'),
+  "attachCapturedAuthentication": zod.boolean().optional().describe('Attach credentials from an independently selected encrypted captured authentication context.'),
+  "authSourceExecutionId": zod.number().int().min(1).optional().describe('ID of a captured authentication context owned by the current user.'),
   "seed": zod.number().int().min(createRecoveryWorkflowBodySeedMin).max(createRecoveryWorkflowBodySeedMax).optional(),
   "workflow": zod.array(zod.object({
   "failureType": zod.enum(['none', 'http_400', 'http_401', 'http_403', 'http_404', 'http_429', 'http_500', 'http_502', 'http_503', 'timeout', 'latency', 'connection_failure', 'malformed_json', 'empty_response', 'duplicate_response']),

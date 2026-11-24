@@ -26,8 +26,11 @@ export interface RunSimulationInput {
      * @maximum 4294967295
      */
   seed?: number;
+  /** @maxLength 2048 */
   pathSuffix?: string;
+  /** @minimum 1 */
   sourceExecutionId?: number;
   attachCapturedAuthentication?: boolean;
+  /** @minimum 1 */
   authSourceExecutionId?: number;
-  }
+}

@@ -329,6 +329,8 @@ components:
         description: { type: ["string", "null"] }
         targetUrl: { type: string, format: uri }
         dashboardRequestPath: { type: ["string", "null"], maxLength: 2048 }
+        method:
+          $ref: "#/components/schemas/HttpMethod"
         headers:
           $ref: "#/components/schemas/KeyValueMap"
         queryParams:
@@ -553,7 +555,9 @@ components:
     RecoveryWorkflowInput:
       type: object
       properties:
-        sourceExecutionId: { type: integer, minimum: 1 }
+        sourceExecutionId: { type: integer, minimum: 1, description: Deprecated legacy captured-request replay source. New recovery workflows use the selected simulation configuration. }
+        attachCapturedAuthentication: { type: boolean, description: Attach credentials from an independently selected encrypted captured authentication context. }
+        authSourceExecutionId: { type: integer, minimum: 1, description: ID of a captured authentication context owned by the current user. }
         seed: { type: integer, minimum: 0, maximum: 4294967295 }
         workflow:
           type: array
