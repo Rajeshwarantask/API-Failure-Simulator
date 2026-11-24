@@ -522,7 +522,9 @@ export const RunSimulationBody = zod.object({
   "responseBody": zod.string().optional(),
   "seed": zod.number().int().min(runSimulationBodySeedMin).max(runSimulationBodySeedMax).optional().describe('Explicit unsigned 32-bit seed; omitted seeds are generated securely.'),
   "pathSuffix": zod.string().max(2048).optional(),
-  "sourceExecutionId": zod.number().int().min(1).optional()
+  "sourceExecutionId": zod.number().int().min(1).optional(),
+  "attachCapturedAuthentication": zod.boolean().optional(),
+  "authSourceExecutionId": zod.number().int().min(1).optional()
 })
 
 export const runSimulationResponseSeedMin = 0;

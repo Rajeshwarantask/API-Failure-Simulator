@@ -190,6 +190,89 @@ describe("dashboard execution paths", () => {
     expect(JSON.stringify(payload)).not.toContain("session=do-not-leak");
   });
 
+  it("attaches only captured authentication to the configured simulation request", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 20, source: "external", tokenAuthenticated: true };
+    mocks.simulation = {
+      id: 20,
+      targetUrl: "https://tasks.example.test/",
+      method: "DELETE",
+      headers: { accept: "application/custom", authorization: "Bearer custom-auth", cookie: "old=session", "x-custom": "keep" },
+      queryParams: { page: "4" },
+      requestBody: '{"task":"custom-body"}',
+      workflow: [],
+    };
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathSuffix: "/api/task/custom", attachCapturedAuthentication: true, authSourceExecutionId: 642 }),
+    });
+    const payload: any = await response.json();
+    const [simulation, _overrides, request, options] = mocks.executeSimulation.mock.calls[0] as any;
+
+    expect(response.status, JSON.stringify(payload)).toBe(201);
+    expect(simulation.method).toBe("DELETE");
+    expect(request).toMatchObject({
+      pathSuffix: "/api/task/custom",
+      headers: {
+        accept: "application/custom",
+        authorization: "Bearer custom-auth",
+        cookie: "session=do-not-leak",
+        "x-custom": "keep",
+      },
+      queryParams: { page: "4" },
+    });
+    expect(simulation.requestBody).toBe('{"task":"custom-body"}');
+    expect(simulation.queryParams).toEqual({ page: "4" });
+    expect(options).toEqual({ forceUpstream: true });
+    expect(JSON.stringify(payload)).not.toContain("session=do-not-leak");
+  });
+
+  it("requires a selected context when authentication is enabled", async () => {
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathSuffix: "/api/task/custom", attachCapturedAuthentication: true }),
+    });
+    expect(response.status).toBe(400);
+    expect((await response.json() as any).error).toContain("Select a captured authentication context");
+    expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
+  it("rejects expired auth contexts without running an unauthenticated request", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 20, source: "external" };
+    mocks.contextRow.expiresAt = new Date(Date.now() - 1000);
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathSuffix: "/api/task/custom", attachCapturedAuthentication: true, authSourceExecutionId: 642 }),
+    });
+    expect(response.status).toBe(410);
+    expect((await response.json() as any).error).toContain("Authentication context expired");
+    expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
+  it("rejects an auth context from another simulation", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 21, source: "external" };
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathSuffix: "/api/task/custom", attachCapturedAuthentication: true, authSourceExecutionId: 642 }),
+    });
+    expect(response.status).toBe(404);
+    expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
+  it("rejects contexts without reusable authentication", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 20, source: "external" };
+    mocks.contextRow.encryptedContext = encryptRequestContext(642, {
+      method: "GET", targetUrl: "https://tasks.example.test/", pathSuffix: "/api/task/list",
+      headers: { accept: "application/json" }, requestBody: null, source: "external",
+    });
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pathSuffix: "/api/task/custom", attachCapturedAuthentication: true, authSourceExecutionId: 642 }),
+    });
+    expect(response.status).toBe(422);
+    expect((await response.json() as any).error).toContain("no reusable cookie or authorization");
+    expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
   it("does not accept a captured execution from another simulation", async () => {
     mocks.sourceExecution = { id: 642, simulationId: 21, source: "external", tokenAuthenticated: true };
     const response = await fetch(`${baseUrl}/simulations/20/executions`, {

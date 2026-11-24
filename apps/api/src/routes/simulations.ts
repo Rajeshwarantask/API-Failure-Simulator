@@ -13,6 +13,7 @@ import { sendUpstreamTimeout } from "../lib/proxy-response.js";
 import { validateTargetUrl } from "../lib/target-url.js";
 import { deriveSeed, generateSeed } from "../engine/prng.js";
 import { capturedProxyPath, capturedUpstreamQuery, decryptRequestContext, encryptRequestContext, requestContextExpiry } from "../lib/recovery-context.js";
+import { capturedAuthenticationHeaders, mergeCapturedAuthenticationHeaders } from "../lib/captured-auth.js";
 import { toFailureType, toHttpMethod, toProxyHttpMethod, type RequestOverrides, type RunOverrides } from "../engine/types.js";
 
 import {
@@ -369,12 +370,21 @@ router.get("/simulations/:id/captured-requests", async (req: AuthenticatedReques
     const [context] = await db.select().from(executionRequestContextsTable)
       .where(eq(executionRequestContextsTable.executionId, execution.id)).limit(1);
     const authExpected = execution.tokenAuthenticated || Object.keys(execution.requestHeaders ?? {}).some((name) => ["cookie", "authorization"].includes(name.toLowerCase()));
-    const contextStatus = !context ? (authExpected ? "expired" : "unavailable")
+    let contextStatus: "available" | "expired" | "unavailable" = !context ? (authExpected ? "expired" : "unavailable")
       : context.expiresAt <= nowAt ? "expired" : "available";
+    let hasAuthentication = Object.keys(execution.requestHeaders ?? {}).some((name) => ["cookie", "authorization"].includes(name.toLowerCase()));
+    if (context && context.expiresAt > nowAt) {
+      try {
+        const secureContext = decryptRequestContext(execution.id, context.encryptedContext);
+        hasAuthentication = hasAuthentication || Boolean(secureContext.headers?.cookie?.trim() || secureContext.headers?.authorization?.trim());
+      } catch {
+        contextStatus = "unavailable";
+      }
+    }
     let path = execution.url;
     try { path = new URL(execution.url).pathname; } catch { path = execution.url.split("?")[0] ?? ""; }
     return { id: execution.id, method: execution.method, path, createdAt: execution.createdAt,
-      contextStatus, expiresAt: context?.expiresAt ?? null };
+      contextStatus, expiresAt: context?.expiresAt ?? null, hasAuthentication };
   }));
   res.json(captured);
 });
@@ -433,6 +443,42 @@ router.post("/simulations/:id/executions", async (req: AuthenticatedRequest, res
   const simulation = await getSimulation(requireUserId(req), params.data.id);
   if (!simulation) {
     res.status(404).json({ error: "Simulation not found" });
+    return;
+  }
+  if (parsed.data.attachCapturedAuthentication) {
+    const authExecutionId = parsed.data.authSourceExecutionId;
+    if (!authExecutionId) {
+      res.status(400).json({ error: "Select a captured authentication context before running this request." }); return;
+    }
+    const userId = requireUserId(req);
+    const sourceExecution = await getExecution(userId, authExecutionId);
+    if (!sourceExecution || sourceExecution.simulationId !== simulation.id || sourceExecution.source !== "external") {
+      res.status(404).json({ error: "Captured authentication context not found for this simulation." }); return;
+    }
+    const [contextRow] = await db.select().from(executionRequestContextsTable)
+      .where(eq(executionRequestContextsTable.executionId, sourceExecution.id)).limit(1);
+    if (!contextRow || contextRow.expiresAt <= now()) {
+      res.status(410).json({ error: "Authentication context expired or unavailable. Make a fresh authenticated request through the Task Manager proxy, then select it here." }); return;
+    }
+    let capturedContext: RequestOverrides & { targetUrl: string };
+    try { capturedContext = decryptRequestContext(sourceExecution.id, contextRow.encryptedContext); }
+    catch {
+      res.status(410).json({ error: "Authentication context is unavailable. Make a fresh authenticated request through the Task Manager proxy, then select it here." }); return;
+    }
+    const credentials = capturedAuthenticationHeaders(capturedContext.headers);
+    if (!credentials.cookie && !credentials.authorization) {
+      res.status(422).json({ error: "The selected captured request contains no reusable cookie or authorization header." }); return;
+    }
+    if (contextRow.expiresAt <= now()) {
+      res.status(410).json({ error: "Authentication context expired before execution. Make a fresh authenticated request through the Task Manager proxy, then run again." }); return;
+    }
+    const configuredHeaders = mergeCapturedAuthenticationHeaders(simulation.headers, credentials);
+    const execution = await executeSimulation(simulation, {}, {
+      pathSuffix,
+      headers: configuredHeaders,
+      queryParams: capturedUpstreamQuery(simulation.queryParams ?? {}, simulation.id),
+    }, { forceUpstream: true });
+    res.status(201).json(RunSimulationResponse.parse(execution));
     return;
   }
   const execution = await executeSimulation(simulation, {}, { pathSuffix });
@@ -649,7 +695,7 @@ async function handleProxy(req: Request, res: import("express").Response): Promi
       .split(",")
       .map((header) => header.trim().toLowerCase())
       .filter(Boolean);
-    const allowedHeaderNames = new Set(["accept", "content-type", "user-agent", "x-request-id", "x-faultline-token"]);
+    const allowedHeaderNames = new Set(["accept", "authorization", "content-type", "user-agent", "x-request-id", "x-faultline-token"]);
     const methodAllowed = !requestedMethod || proxyMethods.split(", ").includes(requestedMethod.toUpperCase());
     const headersAllowed = requestedHeaders.every((header) => allowedHeaderNames.has(header));
     if (!methodAllowed || !headersAllowed) {

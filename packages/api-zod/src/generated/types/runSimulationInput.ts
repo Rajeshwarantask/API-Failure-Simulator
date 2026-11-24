@@ -27,4 +27,7 @@ export interface RunSimulationInput {
      */
   seed?: number;
   pathSuffix?: string;
-}
+  sourceExecutionId?: number;
+  attachCapturedAuthentication?: boolean;
+  authSourceExecutionId?: number;
+  }
