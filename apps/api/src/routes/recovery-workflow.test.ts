@@ -172,6 +172,45 @@ describe("dashboard execution paths", () => {
     expect(response.status, JSON.stringify(payload)).toBe(201);
     expect((mocks.executeSimulation.mock.calls[0] as any)[2].pathSuffix).toBe("/api/task/addtask");
   });
+
+  it("reuses the selected encrypted request context without returning credentials", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 20, source: "external", tokenAuthenticated: true };
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourceExecutionId: 642 }),
+    });
+    const payload: any = await response.json();
+    const [simulation, overrides, request, options] = mocks.executeSimulation.mock.calls[0] as any;
+
+    expect(response.status, JSON.stringify(payload)).toBe(201);
+    expect(request).toMatchObject({ method: "GET", pathSuffix: "/api/task/send/alltask", queryParams: {}, requestBody: null, source: "dashboard", tokenAuthenticated: true });
+    expect(request.headers.cookie).toBe("session=do-not-leak");
+    expect(simulation.targetUrl).toBe("https://tasks.example.test/");
+    expect(options).toEqual({ forceUpstream: true });
+    expect(JSON.stringify(payload)).not.toContain("session=do-not-leak");
+  });
+
+  it("does not accept a captured execution from another simulation", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 21, source: "external", tokenAuthenticated: true };
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourceExecutionId: 642 }),
+    });
+    expect(response.status).toBe(404);
+    expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
+
+  it("rejects expired dashboard request context explicitly", async () => {
+    mocks.sourceExecution = { id: 642, simulationId: 20, source: "external", tokenAuthenticated: true };
+    mocks.contextRow.expiresAt = new Date(Date.now() - 1000);
+    const response = await fetch(`${baseUrl}/simulations/20/executions`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sourceExecutionId: 642 }),
+    });
+    expect(response.status).toBe(410);
+    expect((await response.json() as any).error).toContain("Send a new authenticated request");
+    expect(mocks.executeSimulation).not.toHaveBeenCalled();
+  });
 });
 
 describe("captured execution replay", () => {

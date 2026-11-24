@@ -95,6 +95,52 @@ function fakeDatabase() {
 }
 
 describe("deterministic execution engine", () => {
+  it("force-forwards a captured dashboard request with its authentication and payload", async () => {
+    let forwardedUrl = "";
+    let forwardedInit: RequestInit | undefined;
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async (input, init) => {
+        forwardedUrl = String(input);
+        forwardedInit = init;
+        return new Response('[{"id":1}]', { status: 200, headers: { "content-type": "application/json" } });
+      },
+      createSeed: () => 7,
+    });
+    const result = await execute({ ...fixtureSimulation(101), failureType: "none", forwardRequest: false }, {}, {
+      method: "POST",
+      pathSuffix: "/api/task/send/alltask",
+      queryParams: { include: "open" },
+      headers: { cookie: "session=secret", "content-type": "application/json" },
+      requestBody: '{"task":"saved"}',
+      source: "dashboard",
+    }, { forceUpstream: true });
+
+    expect(forwardedUrl).toContain("/api/task/send/alltask");
+    expect(forwardedUrl).toContain("include=open");
+    expect(forwardedInit?.method).toBe("POST");
+    expect(new Headers(forwardedInit?.headers).get("cookie")).toBe("session=secret");
+    expect(forwardedInit?.body).toBe('{"task":"saved"}');
+    expect(result.simulatedStatus).toBe(200);
+    expect(JSON.stringify(result.requestHeaders)).not.toContain("session=secret");
+  });
+
+  it("keeps simulation failure injection authoritative and short-circuits upstream", async () => {
+    let upstreamCalls = 0;
+    const execute = createSimulationExecutor({
+      db: fakeDatabase(),
+      fetch: async () => { upstreamCalls += 1; return new Response("unexpected"); },
+      createSeed: () => 7,
+    });
+    const result = await execute({ ...fixtureSimulation(102), failureType: "http_400", statusCode: 400 }, {}, {
+      method: "GET", pathSuffix: "/api/task/send/alltask", headers: { cookie: "session=secret" }, source: "dashboard",
+    }, { forceUpstream: true });
+
+    expect(result.failureType).toBe("http_400");
+    expect(result.simulatedStatus).toBe(400);
+    expect(upstreamCalls).toBe(0);
+  });
+
   it("preserves the proxy POST fallback for unsupported incoming methods", () => {
     expect(toProxyHttpMethod("HEAD")).toBe("POST");
     expect(toProxyHttpMethod("GET")).toBe("GET");

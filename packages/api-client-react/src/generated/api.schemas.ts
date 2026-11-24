@@ -292,6 +292,7 @@ export interface RunSimulationInput {
      */
   seed?: number;
   pathSuffix?: string;
+  sourceExecutionId?: number;
 }
 
 /**
